@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">LiteLedger</string>
+    <string name="shortcut_add_short">Add Person</string>
+    <string name="shortcut_add_long">Add New Person</string>
+    <string name="shortcut_search_short">Search</string>
+    <string name="shortcut_search_long">Search People</string>
+</resources>
