@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.Sort
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -54,6 +55,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.liteledger.app.data.PersonWithBalance
+import com.liteledger.app.data.SortOption
+import com.liteledger.app.data.displayName
 import com.liteledger.app.ui.theme.*
 import com.liteledger.app.utils.rememberAppHaptic
 import com.liteledger.app.utils.Formatters
@@ -71,8 +74,11 @@ fun DashboardScreen(
     state: DashboardState,
     searchQuery: String,
     hapticsEnabled: Boolean,
+    showLastActivity: Boolean,
+    currentSortOption: SortOption,
+    onSortOptionChange: (SortOption) -> Unit,
     onSearchQueryChange: (String) -> Unit,
-    onAddPerson: (String) -> Unit,
+    onAddPerson: (String, Boolean) -> Unit,
     onRenamePerson: (Long, String) -> Unit,
     onPersonClick: (Long) -> Unit,
     onDeletePerson: (Long) -> Unit,
@@ -88,6 +94,7 @@ fun DashboardScreen(
     var isRenaming by remember { mutableStateOf(false) }
     var showDeleteConfirmation by remember { mutableStateOf(false) }
     var isSearchActive by remember { mutableStateOf(false) }
+    var showSortSheet by remember { mutableStateOf(false) }
 
     // --- SPRING EFFECT STATE ---
     var swipingCardIndex by remember { mutableStateOf<Int?>(null) }
@@ -189,13 +196,14 @@ fun DashboardScreen(
             .background(MaterialTheme.colorScheme.surfaceContainerLowest)
             .nestedScroll(nestedScrollConnection)
     ) {
+        val navigationBarPadding = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
         LazyColumn(
             state = lazyListState,
             contentPadding = PaddingValues(
                 top = with(density) { topBarHeightPx.toDp() + 16.dp },
-                start = 16.dp, end = 16.dp, bottom = 100.dp
+                start = 16.dp, end = 16.dp, bottom = 100.dp + navigationBarPadding
             ),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
             modifier = Modifier.fillMaxSize()
         ) {
             item {
@@ -205,24 +213,65 @@ fun DashboardScreen(
             }
 
             item {
-                if (!isSearchActive) {
-                    SearchBar(
-                        query = searchQuery,
-                        onQueryChange = {},
-                        onSearch = {},
-                        active = false,
-                        onActiveChange = { isSearchActive = true },
-                        placeholder = { Text("Search people...") },
-                        leadingIcon = { Icon(Icons.Outlined.Search, null) },
-                        trailingIcon = { if (searchQuery.isNotEmpty()) Icon(Icons.Outlined.Close, null) },
-                        colors = SearchBarDefaults.colors(
-                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                            dividerColor = MaterialTheme.colorScheme.outlineVariant,
-                            inputFieldColors = TextFieldDefaults.colors(focusedTextColor = MaterialTheme.colorScheme.onSurface, unfocusedTextColor = MaterialTheme.colorScheme.onSurface)
-                        ),
-                        modifier = Modifier.fillMaxWidth()
-                    ) { }
-                    if (state.people.isNotEmpty()) Spacer(modifier = Modifier.height(16.dp))
+                if (!isSearchActive && state.people.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
+            }
+
+            item {
+                if (!isSearchActive && state.people.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        // 1. the "fake" search bar
+                        Surface(
+                            onClick = { isSearchActive = true }, // triggers the real search view
+                            shape = CircleShape, // perfectly matches the sort button roundedness
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(56.dp) // explicit height matches the sort button perfectly
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 16.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Search,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(modifier = Modifier.width(16.dp))
+                                Text(
+                                    text = "Search people...",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+
+                        // 2. the sort button
+                        FilledIconButton(
+                            onClick = { haptic.click(); showSortSheet = true },
+                            modifier = Modifier.size(56.dp), // same height as the fake bar
+                            colors = IconButtonDefaults.filledIconButtonColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                            )
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Outlined.Sort,
+                                contentDescription = "Sort"
+                            )
+                        }
+                    }
+                }
+            }
+
+            item {
+                if (!isSearchActive && state.people.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(12.dp))
                 }
             }
 
@@ -261,6 +310,7 @@ fun DashboardScreen(
                             index = index,
                             shape = shape,
                             springOffsetX = springOffsetX,
+                            showLastActivity = showLastActivity,
                             onSwipeStart = { idx -> swipingCardIndex = idx },
                             onSwipeProgress = { progress -> swipeProgress = progress },
                             onSwipeEnd = { swipingCardIndex = null; swipeProgress = 0f },
@@ -294,7 +344,6 @@ fun DashboardScreen(
             }
         }
 
-        // ... (Search Active Logic Omitted for Brevity - It remains similar but can be swiped too if desired) ...
         AnimatedVisibility(
             visible = isSearchActive,
             enter = fadeIn(animationSpec = spring(stiffness = Spring.StiffnessMedium)) +
@@ -406,12 +455,12 @@ fun DashboardScreen(
                 shape = MaterialTheme.shapes.extraLarge,
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
+                    .navigationBarsPadding()
                     .padding(24.dp)
             ) { Icon(Icons.Outlined.Add, "Add") }
         }
     }
 
-    // ... (Keep PersonInputSheet, DeleteConfirmationSheet logic) ...
     if (showInputSheet) {
         PersonInputSheet(
             initialName = if (isRenaming) selectedPersonName else "",
@@ -421,12 +470,12 @@ fun DashboardScreen(
                 selectedPersonId = null
             },
             onValidate = onValidateName,
-            onConfirm = { name ->
+            onConfirm = { name, isTemporary ->
                 if (isRenaming && selectedPersonId != null) {
                     onRenamePerson(selectedPersonId!!, name)
                     selectedPersonId = null
                 } else {
-                    onAddPerson(name)
+                    onAddPerson(name, isTemporary)
                 }
                 showInputSheet = false
             }
@@ -441,7 +490,7 @@ fun DashboardScreen(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow
         ) {
             Column(modifier = Modifier.padding(24.dp).navigationBarsPadding()) {
-                Text("Manage Person", style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold))
+                Text("Manage Person", style = MaterialTheme.typography.headlineSmall)
                 Spacer(modifier = Modifier.height(24.dp))
                 Row(modifier = Modifier.fillMaxWidth()) {
                     Button(
@@ -470,6 +519,17 @@ fun DashboardScreen(
             onConfirm = { onDeletePerson(selectedPersonId!!); showDeleteConfirmation = false; selectedPersonId = null }
         )
     }
+
+    if (showSortSheet) {
+        SortBottomSheet(
+            currentOption = currentSortOption,
+            onDismiss = { showSortSheet = false },
+            onSelect = { option ->
+                onSortOptionChange(option)
+                showSortSheet = false
+            }
+        )
+    }
 }
 
 // --- CUSTOM SWIPEABLE PERSON CARD WITH SPRING EFFECT ---
@@ -480,6 +540,7 @@ fun SwipeablePersonCard(
     index: Int,
     shape: Shape,
     springOffsetX: Float,
+    showLastActivity: Boolean,
     onSwipeStart: (Int) -> Unit,
     onSwipeProgress: (Float) -> Unit,
     onSwipeEnd: () -> Unit,
@@ -644,7 +705,8 @@ fun SwipeablePersonCard(
                 item = item,
                 onClick = { onClick() },
                 onLongPress = { onLongPress() },
-                shape = morphedShape
+                shape = morphedShape,
+                showLastActivity = showLastActivity
             )
         }
     }
@@ -675,8 +737,8 @@ fun CustomDashboardTopBar(height: Dp, fraction: Float, statusBarHeight: Dp, onSe
 
             Text(
                 text = "LiteLedger",
+                style = MaterialTheme.typography.headlineMedium,
                 fontSize = titleSize,
-                fontWeight = FontWeight.Bold,
                 modifier = Modifier.align(Alignment.BottomStart).padding(start = titleStartPadding, bottom = titleBottomPadding)
             )
         }
@@ -697,7 +759,7 @@ fun ReportCard(totalReceive: Long, totalPay: Long, isPrivacyMode: Boolean) {
                     text = Formatters.formatCurrency(totalReceive),
                     isPrivacyMode = isPrivacyMode,
                     color = activeGreen,
-                    style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold)
+                    style = MaterialTheme.typography.headlineMedium
                 )
             }
             Column(horizontalAlignment = Alignment.End) {
@@ -706,7 +768,7 @@ fun ReportCard(totalReceive: Long, totalPay: Long, isPrivacyMode: Boolean) {
                     text = Formatters.formatCurrency(totalPay),
                     isPrivacyMode = isPrivacyMode,
                     color = activeRed,
-                    style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold)
+                    style = MaterialTheme.typography.headlineMedium
                 )
             }
         }
@@ -718,8 +780,15 @@ fun lerpTextUnit(start: TextUnit, stop: TextUnit, fraction: Float): TextUnit = (
 // ... (Rest of existing composables: PersonInputSheet, DeleteConfirmationSheet, PersonRow, EmptyState...) ...
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PersonInputSheet(initialName: String, isRename: Boolean, onDismiss: () -> Unit, onValidate: suspend (String) -> Boolean, onConfirm: (String) -> Unit) {
+fun PersonInputSheet(
+    initialName: String, 
+    isRename: Boolean, 
+    onDismiss: () -> Unit, 
+    onValidate: suspend (String) -> Boolean, 
+    onConfirm: (String, Boolean) -> Unit
+) {
     var name by remember { mutableStateOf(initialName) }
+    var isTemporary by remember { mutableStateOf(false) }
     var errorText by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     fun updateName(newName: String) { name = newName; if (errorText != null) errorText = null }
@@ -729,7 +798,7 @@ fun PersonInputSheet(initialName: String, isRename: Boolean, onDismiss: () -> Un
         containerColor = MaterialTheme.colorScheme.surfaceContainerLow
     ) {
         Column(modifier = Modifier.padding(24.dp).navigationBarsPadding()) {
-            Text(if (isRename) "Rename Person" else "New Person", style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold))
+            Text(if (isRename) "Rename Person" else "New Person", style = MaterialTheme.typography.headlineSmall)
             Spacer(modifier = Modifier.height(24.dp))
             OutlinedTextField(
                 value = name, onValueChange = { updateName(it) }, label = { Text("Name") }, isError = errorText != null,
@@ -738,15 +807,55 @@ fun PersonInputSheet(initialName: String, isRename: Boolean, onDismiss: () -> Un
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words, imeAction = ImeAction.Done),
                 colors = OutlinedTextFieldDefaults.colors(unfocusedBorderColor = Color.Transparent, focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh, unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh)
             )
+            
+            // One-time toggle (only for new person, not rename)
+            if (!isRename) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("One-time", style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            "Auto-hide when settled", 
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = isTemporary,
+                        onCheckedChange = { isTemporary = it },
+                        thumbContent = {
+                            Icon(
+                                imageVector = if (isTemporary) Icons.Outlined.Check else Icons.Outlined.Close,
+                                contentDescription = null,
+                                modifier = Modifier.size(SwitchDefaults.IconSize)
+                            )
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                            checkedTrackColor = MaterialTheme.colorScheme.primary,
+                            checkedIconColor = MaterialTheme.colorScheme.primary,
+                            uncheckedThumbColor = MaterialTheme.colorScheme.outline,
+                            uncheckedTrackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                            uncheckedIconColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                            uncheckedBorderColor = MaterialTheme.colorScheme.outline
+                        )
+                    )
+                }
+            }
+            
             Spacer(modifier = Modifier.height(16.dp))
             Row(modifier = Modifier.fillMaxWidth()) {
                 Button(onClick = onDismiss, modifier = Modifier.weight(1f).height(56.dp), shape = SplitLeftShape, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh, contentColor = MaterialTheme.colorScheme.onSurface)) { Text("Cancel") }
-                Spacer(modifier = Modifier.width(4.dp))
+                Spacer(modifier = Modifier.width(6.dp))
                 Button(onClick = {
                     val trimmed = name.trim()
                     if (trimmed.isBlank()) { errorText = "Name cannot be empty" }
-                    else if (trimmed.equals(initialName, ignoreCase = true)) { onConfirm(trimmed) }
-                    else { scope.launch { if (onValidate(trimmed)) errorText = "Person already exists" else onConfirm(trimmed) } }
+                    else if (trimmed.equals(initialName, ignoreCase = true)) { onConfirm(trimmed, isTemporary) }
+                    else { scope.launch { if (onValidate(trimmed)) errorText = "Person already exists" else onConfirm(trimmed, isTemporary) } }
                 }, modifier = Modifier.weight(1f).height(56.dp), shape = SplitRightShape) { Text("Save") }
             }
         }
@@ -761,7 +870,7 @@ fun DeleteConfirmationSheet(onDismiss: () -> Unit, onConfirm: () -> Unit) {
         containerColor = MaterialTheme.colorScheme.surfaceContainerLow
     ) {
         Column(modifier = Modifier.padding(24.dp).navigationBarsPadding(), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("Delete Person?", style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold))
+            Text("Delete Person?", style = MaterialTheme.typography.headlineSmall)
             Spacer(modifier = Modifier.height(8.dp))
             Text("This will delete all history permanently.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(modifier = Modifier.height(24.dp))
@@ -776,7 +885,13 @@ fun DeleteConfirmationSheet(onDismiss: () -> Unit, onConfirm: () -> Unit) {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun PersonRow(item: PersonWithBalance, onClick: (Long) -> Unit, onLongPress: (Long) -> Unit, shape: Shape) {
+fun PersonRow(
+    item: PersonWithBalance,
+    onClick: (Long) -> Unit,
+    onLongPress: (Long) -> Unit,
+    shape: Shape,
+    showLastActivity: Boolean = true
+) {
     val isDark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
     val activeGreen = if (isDark) Color(0xFF81C784) else MoneyGreen
     val activeRed = if (isDark) Color(0xFFE57373) else MoneyRed
@@ -788,8 +903,18 @@ fun PersonRow(item: PersonWithBalance, onClick: (Long) -> Unit, onLongPress: (Lo
                 Text(item.person.name.take(1).uppercase(), color = MaterialTheme.colorScheme.onPrimary, style = MaterialTheme.typography.titleMedium)
             }
             Spacer(Modifier.width(16.dp))
-            Text(item.person.name, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold))
-            Text(Formatters.formatCurrency(item.balance), color = balanceColor, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(item.person.name, style = MaterialTheme.typography.titleMedium)
+                // Show last activity if enabled and has transactions
+                if (showLastActivity && item.lastActivityAt != null) {
+                    Text(
+                        text = Formatters.formatRelativeTime(item.lastActivityAt),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                    )
+                }
+            }
+            Text(Formatters.formatCurrency(item.balance), color = balanceColor, style = MaterialTheme.typography.titleMedium)
         }
     }
 }
@@ -800,7 +925,7 @@ fun EmptyState() {
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(bottom = 120.dp)) {
             Icon(Icons.Outlined.Person, null, modifier = Modifier.size(72.dp), tint = MaterialTheme.colorScheme.outlineVariant)
             Spacer(Modifier.height(16.dp))
-            Text("No debts yet", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("No debts yet", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -809,7 +934,7 @@ fun EmptyState() {
 fun SearchInitialState() {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(top = 48.dp)) {
-            Text("No recent searches", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("No recent searches", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -820,7 +945,70 @@ fun SearchNotFoundState() {
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(top = 48.dp)) {
             Icon(Icons.Outlined.SearchOff, null, modifier = Modifier.size(72.dp), tint = MaterialTheme.colorScheme.outlineVariant)
             Spacer(modifier = Modifier.height(16.dp))
-            Text("Not found", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Not found", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SortBottomSheet(
+    currentOption: SortOption,
+    onDismiss: () -> Unit,
+    onSelect: (SortOption) -> Unit
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 24.dp)
+                .navigationBarsPadding()
+        ) {
+            Text(
+                "Sort by",
+                style = MaterialTheme.typography.headlineSmall,
+                modifier = Modifier.padding(bottom = 16.dp)
+            )
+
+            SortOption.entries.forEachIndexed { index, option ->
+                val shape = when {
+                    SortOption.entries.size == 1 -> SingleItemShape
+                    index == 0 -> TopItemShape
+                    index == SortOption.entries.lastIndex -> BottomItemShape
+                    else -> MiddleItemShape
+                }
+                val isSelected = option == currentOption
+
+                Surface(
+                    onClick = { onSelect(option) },
+                    shape = shape,
+                    color = if (isSelected)
+                        MaterialTheme.colorScheme.secondaryContainer
+                    else
+                        MaterialTheme.colorScheme.surfaceContainerHigh,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 1.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = option.displayName,
+                            style = MaterialTheme.typography.bodyLarge,
+                            modifier = Modifier.weight(1f)
+                        )
+                        RadioButton(
+                            selected = isSelected,
+                            onClick = null
+                        )
+                    }
+                }
+            }
         }
     }
 }

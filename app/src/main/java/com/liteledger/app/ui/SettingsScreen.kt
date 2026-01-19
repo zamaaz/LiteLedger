@@ -9,6 +9,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -42,10 +43,18 @@ fun SettingsScreen(
     onBack: () -> Unit,
     isPrivacyMode: Boolean,
     onPrivacyToggle: (Boolean) -> Unit,
-    onExportClick: () -> Unit
+    onExportClick: () -> Unit,
+    archivedCount: Int = 0,
+    archivedPeople: List<com.liteledger.app.data.PersonWithBalance> = emptyList(),
+    onUnarchive: (Long) -> Unit = {},
+    onDeletePerson: (Long) -> Unit = {},
+    onPersonClick: (Long, String) -> Unit = { _, _ -> }
 ) {
     val state by viewModel.state.collectAsState()
     var showThemeSheet by remember { mutableStateOf(false) }
+    var showTagsSheet by remember { mutableStateOf(false) }
+    var showArchivedSheet by remember { mutableStateOf(false) }
+    val allTags by viewModel.allTags.collectAsState()
 
     // --- COLLAPSING LOGIC ---
     val density = LocalDensity.current
@@ -140,13 +149,14 @@ fun SettingsScreen(
             .background(MaterialTheme.colorScheme.surfaceContainerLowest)
             .nestedScroll(nestedScrollConnection)
     ) {
+        val navigationBarPadding = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
         LazyColumn(
             state = lazyListState,
             contentPadding = PaddingValues(
                 top = with(density) { topBarHeightPx.toDp() + 16.dp },
                 start = 16.dp,
                 end = 16.dp,
-                bottom = 32.dp
+                bottom = 32.dp + navigationBarPadding
             ),
             verticalArrangement = Arrangement.spacedBy(24.dp),
             modifier = Modifier.fillMaxSize()
@@ -157,6 +167,8 @@ fun SettingsScreen(
                         SettingsSelectorItem(Icons.Outlined.WbSunny, "App Theme", "Switch between light, dark, or follow system appearance.", currentThemeLabel) { showThemeSheet = true }
                         Spacer(modifier = Modifier.height(4.dp))
                         SettingsSwitchItem(Icons.Outlined.Vibration, "Haptic Feedback", "Vibrate on interactions", state.hapticsEnabled) { viewModel.setHaptics(it) }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        SettingsSwitchItem(Icons.Outlined.Schedule, "Show Last Activity", "Display last activity date on cards", state.showLastActivity) { viewModel.setShowLastActivity(it) }
                     }
                 }
             }
@@ -180,6 +192,17 @@ fun SettingsScreen(
             item {
                 SettingsGroup(title = "Data") {
                     SettingsContainer {
+                        // Tags management - only show if tags exist
+                        if (state.tagCount > 0) {
+                            SettingsNavigationItem(
+                                icon = Icons.Outlined.Label,
+                                title = "Tags",
+                                subtitle = "${state.tagCount} tag${if (state.tagCount > 1) "s" else ""}",
+                                onClick = { showTagsSheet = true }
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                        }
+
                         SettingsNavigationItem(Icons.Outlined.Backup, "Backup Data", "Save your ledger to a JSON file") {
                             backupLauncher.launch("LiteLedger_Backup_${DateTimeFormatter.ofPattern("yyyyMMdd_HHmm").format(LocalDateTime.now())}.json")
                         }
@@ -196,13 +219,24 @@ fun SettingsScreen(
                             subtitle = "Save as CSV (Excel)",
                             onClick = onExportClick
                         )
+
+                        // --- ARCHIVED PEOPLE ---
+                        if (archivedCount > 0) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            SettingsNavigationItem(
+                                icon = Icons.Outlined.Archive,
+                                title = "Archived People",
+                                subtitle = "$archivedCount hidden",
+                                onClick = { showArchivedSheet = true }
+                            )
+                        }
                     }
                 }
             }
             item {
                 SettingsGroup(title = "About") {
                     SettingsContainer {
-                        SettingsNavigationItem(Icons.Outlined.Info, "Version", "1.0.0 (Lite)", showChevron = false) {}
+                        SettingsNavigationItem(Icons.Outlined.Info, "Version", "1.1.0", showChevron = false) {}
                     }
                 }
             }
@@ -218,6 +252,112 @@ fun SettingsScreen(
 
     if (showThemeSheet) {
         ThemeSelectionSheet(state.theme, { showThemeSheet = false }, { viewModel.setTheme(it); showThemeSheet = false })
+    }
+
+    if (showTagsSheet) {
+        TagsManagementSheet(
+            tags = allTags,
+            onDismiss = { showTagsSheet = false },
+            onRenameTag = { tag, newName -> viewModel.renameTag(tag, newName) },
+            onDeleteTag = { tag -> viewModel.deleteTag(tag) }
+        )
+    }
+
+    if (showArchivedSheet) {
+        ArchivedPeopleSheet(
+            archivedPeople = archivedPeople,
+            onDismiss = { showArchivedSheet = false },
+            onUnarchive = onUnarchive,
+            onDelete = onDeletePerson,
+            onPersonClick = { id, name -> showArchivedSheet = false; onPersonClick(id, name) }
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ArchivedPeopleSheet(
+    archivedPeople: List<com.liteledger.app.data.PersonWithBalance>,
+    onDismiss: () -> Unit,
+    onUnarchive: (Long) -> Unit,
+    onDelete: (Long) -> Unit,
+    onPersonClick: (Long, String) -> Unit
+) {
+    var personToDelete by remember { mutableStateOf<com.liteledger.app.data.PersonWithBalance?>(null) }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+    ) {
+        Column(modifier = Modifier.padding(24.dp).navigationBarsPadding()) {
+            Text("Archived People", style = MaterialTheme.typography.headlineSmall)
+            Text(
+                "${archivedPeople.size} hidden from main list",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(16.dp))
+
+            if (archivedPeople.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxWidth().height(100.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("No archived people", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            } else {
+                LazyColumn(
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.heightIn(max = 300.dp)
+                ) {
+                    items(archivedPeople, key = { it.person.id }) { person ->
+                        Surface(
+                            onClick = { onPersonClick(person.person.id, person.person.name) },
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(person.person.name, style = MaterialTheme.typography.bodyLarge)
+                                    if (person.person.isTemporary) {
+                                        Text("One-time", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                                Row {
+                                    IconButton(onClick = { onUnarchive(person.person.id) }) {
+                                        Icon(Icons.Outlined.Unarchive, "Unarchive", tint = MaterialTheme.colorScheme.primary)
+                                    }
+                                    IconButton(onClick = { personToDelete = person }) {
+                                        Icon(Icons.Outlined.Delete, "Delete", tint = MaterialTheme.colorScheme.error)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Delete confirmation
+    if (personToDelete != null) {
+        AlertDialog(
+            onDismissRequest = { personToDelete = null },
+            icon = { Icon(Icons.Outlined.Warning, null, tint = MaterialTheme.colorScheme.error) },
+            title = { Text("Delete Person?") },
+            text = { Text("This will permanently delete \"${personToDelete!!.person.name}\" and all their transactions.") },
+            confirmButton = {
+                TextButton(
+                    onClick = { onDelete(personToDelete!!.person.id); personToDelete = null },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                ) { Text("Delete") }
+            },
+            dismissButton = { TextButton(onClick = { personToDelete = null }) { Text("Cancel") } }
+        )
     }
 }
 
@@ -252,7 +392,7 @@ fun CustomSettingsTopBar(
             Text(
                 text = "Settings",
                 fontSize = titleSize,
-                fontWeight = FontWeight.Bold,
+                style = MaterialTheme.typography.headlineMedium,
                 modifier = Modifier.align(Alignment.BottomStart).padding(start = titleStartPadding, bottom = titleBottomPadding)
             )
         }
@@ -266,7 +406,7 @@ fun SettingsGroup(title: String, content: @Composable () -> Unit) {
             text = title,
             style = MaterialTheme.typography.titleMedium.copy(
                 color = MaterialTheme.colorScheme.primary,
-                fontWeight = FontWeight.SemiBold
+                fontWeight = FontWeight.Normal
             ),
             modifier = Modifier.padding(start = 12.dp, bottom = 8.dp)
         )
@@ -322,7 +462,7 @@ fun SettingsSelectorItem(
                 Column {
                     Text(
                         text = title,
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                        style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
@@ -347,7 +487,7 @@ fun SettingsSelectorItem(
                     ) {
                         Text(
                             text = selectedValue,
-                            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+                            style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Icon(
@@ -378,7 +518,7 @@ fun SettingsSwitchItem(
             IconBox(icon)
             Spacer(modifier = Modifier.width(16.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold))
+                Text(title, style = MaterialTheme.typography.titleMedium)
                 Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Switch(
@@ -421,7 +561,7 @@ fun SettingsNavigationItem(
             IconBox(icon)
             Spacer(modifier = Modifier.width(16.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold))
+                Text(title, style = MaterialTheme.typography.titleMedium)
                 Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             if (showChevron) {
@@ -473,7 +613,7 @@ fun ThemeSelectionSheet(
         Column(modifier = Modifier.padding(bottom = 32.dp)) {
             Text(
                 "App Theme",
-                style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
+                style = MaterialTheme.typography.headlineSmall,
                 modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp)
             )
 
@@ -511,5 +651,128 @@ fun ThemeSelectionSheet(
                 }
             }
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun TagsManagementSheet(
+    tags: List<com.liteledger.app.data.Tag>,
+    onDismiss: () -> Unit,
+    onRenameTag: (com.liteledger.app.data.Tag, String) -> Unit,
+    onDeleteTag: (com.liteledger.app.data.Tag) -> Unit
+) {
+    var tagToRename by remember { mutableStateOf<com.liteledger.app.data.Tag?>(null) }
+    var tagToDelete by remember { mutableStateOf<com.liteledger.app.data.Tag?>(null) }
+    var renameText by remember { mutableStateOf("") }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+    ) {
+        Column(modifier = Modifier.padding(24.dp).navigationBarsPadding()) {
+            Text(
+                "Manage Tags",
+                style = MaterialTheme.typography.headlineSmall
+            )
+            Text(
+                "${tags.size} tag${if (tags.size > 1) "s" else ""}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Spacer(Modifier.height(16.dp))
+
+            if (tags.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxWidth().height(100.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("No tags yet", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            } else {
+                LazyColumn(
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.heightIn(max = 300.dp)
+                ) {
+                    items(tags, key = { it.id }) { tag ->
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(tag.name, style = MaterialTheme.typography.bodyLarge)
+                                Row {
+                                    IconButton(onClick = { tagToRename = tag; renameText = tag.name }) {
+                                        Icon(Icons.Outlined.Edit, "Rename", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    IconButton(onClick = { tagToDelete = tag }) {
+                                        Icon(Icons.Outlined.Delete, "Delete", tint = MaterialTheme.colorScheme.error)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Rename Dialog
+    if (tagToRename != null) {
+        AlertDialog(
+            onDismissRequest = { tagToRename = null },
+            title = { Text("Rename Tag") },
+            text = {
+                OutlinedTextField(
+                    value = renameText,
+                    onValueChange = { renameText = it },
+                    label = { Text("Tag name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (renameText.isNotBlank()) {
+                            onRenameTag(tagToRename!!, renameText.trim())
+                        }
+                        tagToRename = null
+                    }
+                ) { Text("Save") }
+            },
+            dismissButton = {
+                TextButton(onClick = { tagToRename = null }) { Text("Cancel") }
+            }
+        )
+    }
+
+    // Delete Confirmation Dialog
+    if (tagToDelete != null) {
+        AlertDialog(
+            onDismissRequest = { tagToDelete = null },
+            icon = { Icon(Icons.Outlined.Warning, null, tint = MaterialTheme.colorScheme.error) },
+            title = { Text("Delete Tag?") },
+            text = {
+                Text("This will remove \"${tagToDelete!!.name}\" from all entries. The entries themselves won't be deleted.")
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onDeleteTag(tagToDelete!!)
+                        tagToDelete = null
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                ) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { tagToDelete = null }) { Text("Cancel") }
+            }
+        )
     }
 }

@@ -6,16 +6,41 @@ import com.liteledger.app.data.PersonWithBalance
 
 @Dao
 interface LedgerDao {
+    // Active people only (not archived)
     @Query("""
         SELECT 
             p.*, 
-            COALESCE(SUM(CASE WHEN t.type = 'GAVE' THEN t.amount ELSE -t.amount END), 0) as balance
+            COALESCE(SUM(CASE WHEN t.type = 'GAVE' THEN t.amount ELSE -t.amount END), 0) as balance,
+            MAX(t.date) as lastActivityAt
         FROM person p
         LEFT JOIN `transactions` t ON p.id = t.personId
+        WHERE p.isArchived = 0
         GROUP BY p.id
         ORDER BY MAX(t.date) DESC, p.id DESC
     """)
     fun getPersonsWithBalances(): Flow<List<PersonWithBalance>>
+
+    // Archived people only
+    @Query("""
+        SELECT 
+            p.*, 
+            COALESCE(SUM(CASE WHEN t.type = 'GAVE' THEN t.amount ELSE -t.amount END), 0) as balance,
+            MAX(t.date) as lastActivityAt
+        FROM person p
+        LEFT JOIN `transactions` t ON p.id = t.personId
+        WHERE p.isArchived = 1
+        GROUP BY p.id
+        ORDER BY MAX(t.date) DESC, p.id DESC
+    """)
+    fun getArchivedPersonsWithBalances(): Flow<List<PersonWithBalance>>
+
+    // Get person by ID for auto-archive check
+    @Query("SELECT * FROM person WHERE id = :id")
+    suspend fun getPersonById(id: Long): Person?
+
+    // Archive/unarchive
+    @Query("UPDATE person SET isArchived = :archived WHERE id = :id")
+    suspend fun setPersonArchived(id: Long, archived: Boolean)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertPerson(person: Person): Long
@@ -35,7 +60,7 @@ interface LedgerDao {
     @Query("SELECT * FROM `transactions`") suspend fun getAllTransactions(): List<Transaction>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertTransaction(transaction: Transaction)
+    suspend fun insertTransaction(transaction: Transaction): Long
 
     @Delete
     suspend fun deleteTransaction(transaction: Transaction)
@@ -60,4 +85,11 @@ interface LedgerDao {
 
     @Query("SELECT COUNT(*) FROM person WHERE name = :name COLLATE NOCASE")
     suspend fun countPersonsWithName(name: String): Int
+
+    // Get balance for a person (for auto-archive check)
+    @Query("""
+        SELECT COALESCE(SUM(CASE WHEN type = 'GAVE' THEN amount ELSE -amount END), 0)
+        FROM `transactions` WHERE personId = :personId
+    """)
+    suspend fun getPersonBalance(personId: Long): Long
 }

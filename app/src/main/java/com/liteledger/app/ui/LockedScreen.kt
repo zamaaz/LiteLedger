@@ -52,8 +52,7 @@ fun LockedScreen(
             Text(
                 text = "LiteLedger",
                 style = MaterialTheme.typography.displaySmall.copy(
-                    fontFamily = AppFontFamily,
-                    fontWeight = FontWeight.Bold
+                    fontFamily = AppFontFamily
                 ),
                 color = MaterialTheme.colorScheme.onSurface
             )
@@ -87,7 +86,6 @@ fun LockedScreen(
                 Text(
                     text = "Unlock",
                     style = MaterialTheme.typography.titleMedium.copy(
-                        fontWeight = FontWeight.Bold,
                         fontFamily = AppFontFamily
                     )
                 )

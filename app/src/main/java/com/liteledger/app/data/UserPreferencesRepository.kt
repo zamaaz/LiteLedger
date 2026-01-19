@@ -23,6 +23,8 @@ class UserPreferencesRepository(private val context: Context) {
         val HAPTICS = booleanPreferencesKey("haptics_enabled")
         val BIOMETRIC = booleanPreferencesKey("biometric_enabled")
         val PRIVACY = booleanPreferencesKey("privacy_mode")
+        val SHOW_LAST_ACTIVITY = booleanPreferencesKey("show_last_activity")
+        val SORT_OPTION = stringPreferencesKey("sort_option")
     }
 
     // --- READ STREAMS ---
@@ -42,8 +44,24 @@ class UserPreferencesRepository(private val context: Context) {
         prefs[Keys.PRIVACY] ?: false
     }
 
+    val showLastActivityFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[Keys.SHOW_LAST_ACTIVITY] ?: true // Default ON
+    }
+
+    val sortOptionFlow: Flow<SortOption> = context.dataStore.data.map { prefs ->
+        try {
+            SortOption.valueOf(prefs[Keys.SORT_OPTION] ?: SortOption.RECENT_ACTIVITY.name)
+        } catch (_: IllegalArgumentException) {
+            SortOption.RECENT_ACTIVITY
+        }
+    }
+
     suspend fun setPrivacy(enabled: Boolean) {
         context.dataStore.edit { it[Keys.PRIVACY] = enabled }
+    }
+
+    suspend fun setShowLastActivity(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.SHOW_LAST_ACTIVITY] = enabled }
     }
 
     // --- WRITE ACTIONS ---
@@ -57,5 +75,9 @@ class UserPreferencesRepository(private val context: Context) {
 
     suspend fun setBiometric(enabled: Boolean) {
         context.dataStore.edit { it[Keys.BIOMETRIC] = enabled }
+    }
+
+    suspend fun setSortOption(option: SortOption) {
+        context.dataStore.edit { it[Keys.SORT_OPTION] = option.name }
     }
 }

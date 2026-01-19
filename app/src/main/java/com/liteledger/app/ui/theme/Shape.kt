@@ -21,6 +21,10 @@ val SingleItemShape = RoundedCornerShape(28.dp)
 val SplitLeftShape = RoundedCornerShape(topStart = 28.dp, bottomStart = 28.dp, topEnd = 4.dp, bottomEnd = 4.dp)
 val SplitRightShape = RoundedCornerShape(topStart = 4.dp, bottomStart = 4.dp, topEnd = 28.dp, bottomEnd = 28.dp)
 
+// --- SPLIT MIDDLE ITEMS (for middle rows split horizontally) ---
+val MiddleSplitLeftShape = RoundedCornerShape(topStart = 4.dp, bottomStart = 4.dp, topEnd = 4.dp, bottomEnd = 4.dp)
+val MiddleSplitRightShape = RoundedCornerShape(topStart = 4.dp, bottomStart = 4.dp, topEnd = 4.dp, bottomEnd = 4.dp)
+
 // --- SPLIT BUTTONS (VERTICAL STACK BOTTOM) ---
 // Used when buttons are at the bottom of a card/sheet
 val BottomLeftSplitShape = RoundedCornerShape(topStart = 4.dp, bottomStart = 28.dp, topEnd = 0.dp, bottomEnd = 0.dp)

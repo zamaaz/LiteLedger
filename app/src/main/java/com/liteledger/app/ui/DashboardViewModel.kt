@@ -5,6 +5,8 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.liteledger.app.data.LedgerRepository
 import com.liteledger.app.data.PersonWithBalance
+import com.liteledger.app.data.SortOption
+import com.liteledger.app.data.UserPreferencesRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -14,6 +16,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.flowOn
+import kotlin.math.abs
 
 data class DashboardState(
     val people: List<PersonWithBalance> = emptyList(),
@@ -21,18 +24,31 @@ data class DashboardState(
     val totalPay: Long = 0
 )
 
-class DashboardViewModel(private val repository: LedgerRepository) : ViewModel() {
+class DashboardViewModel(
+    private val repository: LedgerRepository,
+    private val userPrefs: UserPreferencesRepository
+) : ViewModel() {
 
-    // 1. New Search State
+    // Search State
     private val _searchQuery = MutableStateFlow("")
     val searchQuery = _searchQuery.asStateFlow()
 
-    // 2. Combine the DB data with the Search Query
+    // Sort State
+    private val _sortOption = MutableStateFlow(SortOption.RECENT_ACTIVITY)
+    val sortOption: StateFlow<SortOption> = _sortOption.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            userPrefs.sortOptionFlow.collect { _sortOption.value = it }
+        }
+    }
+
+    // Combine the DB data with Search Query and Sort Option
     val state: StateFlow<DashboardState> = combine(
         repository.personsWithBalances,
-        _searchQuery
-    ) { list, query ->
-        // this calculation now runs on a background thread
+        _searchQuery,
+        _sortOption
+    ) { list, query, sort ->
         val totalReceive = list.filter { it.balance > 0 }.sumOf { it.balance }
         val totalPay = list.filter { it.balance < 0 }.sumOf { it.balance }
 
@@ -42,8 +58,10 @@ class DashboardViewModel(private val repository: LedgerRepository) : ViewModel()
             list.filter { it.person.name.contains(query, ignoreCase = true) }
         }
 
+        val sortedList = sortPeople(filteredList, sort)
+
         DashboardState(
-            people = filteredList,
+            people = sortedList,
             totalReceive = totalReceive,
             totalPay = totalPay
         )
@@ -55,22 +73,56 @@ class DashboardViewModel(private val repository: LedgerRepository) : ViewModel()
         initialValue = DashboardState()
     )
 
+    private fun sortPeople(list: List<PersonWithBalance>, option: SortOption): List<PersonWithBalance> {
+        return when (option) {
+            SortOption.RECENT_ACTIVITY -> list.sortedWith(
+                compareByDescending<PersonWithBalance> { it.lastActivityAt ?: Long.MIN_VALUE }
+                    .thenBy { it.person.name.lowercase() }
+            )
+            SortOption.OLDEST_ACTIVITY -> list.sortedWith(
+                compareBy<PersonWithBalance> { it.lastActivityAt ?: Long.MAX_VALUE }
+                    .thenBy { it.person.name.lowercase() }
+            )
+            SortOption.HIGHEST_AMOUNT -> list.sortedWith(
+                compareByDescending<PersonWithBalance> { abs(it.balance) }
+                    .thenByDescending { it.lastActivityAt ?: Long.MIN_VALUE }
+            )
+            SortOption.LOWEST_AMOUNT -> list.sortedWith(
+                compareBy<PersonWithBalance> { abs(it.balance) }
+                    .thenByDescending { it.lastActivityAt ?: Long.MIN_VALUE }
+            )
+            SortOption.NAME_AZ -> list.sortedWith(
+                compareBy { it.person.name.lowercase() }
+            )
+            SortOption.UNSETTLED_FIRST -> list.sortedWith(
+                compareByDescending<PersonWithBalance> { it.balance != 0L }
+                    .thenByDescending { it.lastActivityAt ?: Long.MIN_VALUE }
+                    .thenBy { it.person.name.lowercase() }
+            )
+        }
+    }
+
     fun onSearchQueryChange(query: String) {
         _searchQuery.value = query
+    }
+
+    fun setSortOption(option: SortOption) {
+        viewModelScope.launch {
+            _sortOption.value = option
+            userPrefs.setSortOption(option)
+        }
     }
 
     suspend fun validatePersonName(name: String): Boolean {
         return repository.personExists(name.trim())
     }
 
-    fun addPerson(name: String) {
-        viewModelScope.launch { repository.addPerson(name.trim()) }
+    fun addPerson(name: String, isTemporary: Boolean = false) {
+        viewModelScope.launch { repository.addPerson(name.trim(), isTemporary) }
     }
 
     fun renamePerson(personId: Long, newName: String) {
         viewModelScope.launch {
-            // Logic remains the same: find in the current filtered list is fine,
-            // as you can only rename someone you can see.
             val currentPerson = state.value.people.find { it.person.id == personId }?.person
             if (currentPerson != null) {
                 repository.updatePerson(currentPerson.copy(name = newName))
@@ -88,9 +140,12 @@ class DashboardViewModel(private val repository: LedgerRepository) : ViewModel()
     }
 }
 
-class DashboardViewModelFactory(private val repository: LedgerRepository) : ViewModelProvider.Factory {
+class DashboardViewModelFactory(
+    private val repository: LedgerRepository,
+    private val userPrefs: UserPreferencesRepository
+) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         @Suppress("UNCHECKED_CAST")
-        return DashboardViewModel(repository) as T
+        return DashboardViewModel(repository, userPrefs) as T
     }
 }

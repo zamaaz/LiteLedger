@@ -1,3 +1,7 @@
+# =======================
+# Android / Kotlin Project
+# =======================
+
 # Built application files
 *.apk
 *.aar
@@ -7,18 +11,24 @@
 # Files for the ART/Dalvik VM
 *.dex
 
-# Java class files
+# Java/Kotlin class files
 *.class
 
 # Generated files
 bin/
 gen/
 out/
+release/
+
+# Release output (APKs, AABs, baseline profiles)
+app/release/
+**/release/
+*.dm
 
 # Gradle files
 .gradle/
 build/
-app/build/
+**/build/
 
 # Local configuration file (sdk.dir is not checked in)
 local.properties
@@ -35,32 +45,194 @@ proguard/
 # Android Studio captures folder
 captures/
 
-# IntelliJ
+# =======================
+# IntelliJ / Android Studio
+# =======================
+
+# IntelliJ IDEA project files
 *.iml
+*.ipr
+*.iws
+
+# IDE specific folders
 .idea/workspace.xml
 .idea/tasks.xml
 .idea/gradle.xml
 .idea/assetWizardSettings.xml
-.idea/dictionaries
-.idea/libraries
-# Android Studio 3 creates this folder
-.idea/caches
+.idea/dictionaries/
+.idea/libraries/
+.idea/caches/
 .idea/modules.xml
-# Android Studio 3.5+
 .idea/navEditor.xml
+.idea/androidTestResultsUserPreferences.xml
+.idea/deploymentTargetDropDown.xml
+.idea/migrations.xml
+.idea/shelf/
+.idea/jarRepositories.xml
+.idea/misc.xml
+.idea/.name
+.idea/vcs.xml
+.idea/runConfigurations.xml
+.idea/inspectionProfiles/
+.idea/appInsightsSettings.xml
+.idea/kotlinc.xml
+.idea/other.xml
 
-# Keystore files
+# =======================
+# Keystore & Secrets
+# =======================
+
+# Keystore files (NEVER commit these!)
 *.jks
 *.keystore
 *.key
 *.p12
+*.pem
+*.cer
 
-# External native build folder generated in Android Studio 2.2 and later
-.externalNativeBuild
+# API Keys and secrets
+secrets.properties
+apikeys.properties
+google-services.json
+GoogleService-Info.plist
+
+# =======================
+# Native Build
+# =======================
+
+# External native build folder
+.externalNativeBuild/
 .cxx/
 
-# Google Services (e.g. APIs or Firebase)
-google-services.json
+# CMake
+CMakeLists.txt.user
+CMakeCache.txt
+CMakeFiles/
 
-# FreeMarker stuff
+# =======================
+# Kotlin Specific
+# =======================
+
+# Kotlin/Native
+*.klib
+
+# Kotlin compiler cache
+.kotlin/
+
+# Kotlin Multiplatform
+/shared/build/
+/iosApp/Pods/
+/iosApp/iosApp.xcworkspace/
+
+# Kotlin Script
+*.kts.kts-cache/
+
+# =======================
+# Testing
+# =======================
+
+# Test output
+/test-results/
+/test-reports/
+jacoco.exec
+
+# Coverage reports
+/coverage/
+*.exec
+*.ec
+
+# =======================
+# OS Generated Files
+# =======================
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# =======================
+# Editor / IDE Specific
+# =======================
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# FreeMarker
 *.ftl
+
+# =======================
+# Miscellaneous
+# =======================
+
+# Crashlytics
+crashlytics.properties
+crashlytics-build.properties
+fabric.properties
+
+# Lint
+lint/outputs/
+lint/intermediates/
+
+# Freeline
+freeline.py
+freeline/
+freeline_project_description.json
+
+# Fabric (deprecated but may exist)
+fabric.properties
+
+# fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots
+fastlane/test_output
+
+# Backup files
+*.bak
+*.backup
+*.swp
+*.swo
+*~
+
+# Temporary files
+*.tmp
+*.temp
+.tmp/
+tmp/
+
+# Bundle files (if applicable)
+*.bundle
+
+# Local environment
+.env
+.env.local
+.env.*.local
+env.properties
+
+# Gemini agent
+.gemini/

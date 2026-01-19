@@ -9,6 +9,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.liteledger.app.data.AppTheme
 import com.liteledger.app.data.LedgerRepository
+import com.liteledger.app.data.Tag
 import com.liteledger.app.data.UserPreferencesRepository
 import com.liteledger.app.utils.BackupHelper
 import kotlinx.coroutines.flow.SharingStarted
@@ -22,7 +23,9 @@ data class SettingsState(
     val theme: AppTheme = AppTheme.SYSTEM,
     val hapticsEnabled: Boolean = true,
     val biometricEnabled: Boolean = false,
-    val isPrivacyEnabled: Boolean = false, // <--- ADDED THIS
+    val isPrivacyEnabled: Boolean = false,
+    val showLastActivity: Boolean = true,
+    val tagCount: Int = 0,
     val isLoading: Boolean = true
 )
 
@@ -34,18 +37,31 @@ class SettingsViewModel(
 
     private val backupHelper = BackupHelper(application, repository)
 
+    // Expose all tags for management screen
+    val allTags: StateFlow<List<Tag>> = repository.allTags
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // Expose archived people
+    val archivedPeople: StateFlow<List<com.liteledger.app.data.PersonWithBalance>> = 
+        repository.archivedPersonsWithBalances
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     // Combine flows to create the UI state
-    val state: StateFlow<SettingsState> = combine(
+    val state: StateFlow<SettingsState> = com.liteledger.app.utils.combine(
         userPrefs.themeFlow,
         userPrefs.hapticsFlow,
         userPrefs.biometricFlow,
-        userPrefs.privacyFlow // <--- ADDED THIS (Requires update in Repo)
-    ) { theme, haptics, bio, privacy ->
+        userPrefs.privacyFlow,
+        userPrefs.showLastActivityFlow,
+        repository.tagCount
+    ) { theme, haptics, bio, privacy, showLastActivity, tagCount ->
         SettingsState(
             theme = theme,
             hapticsEnabled = haptics,
             biometricEnabled = bio,
-            isPrivacyEnabled = privacy, // <--- Mapped here
+            isPrivacyEnabled = privacy,
+            showLastActivity = showLastActivity,
+            tagCount = tagCount,
             isLoading = false
         )
     }.stateIn(
@@ -66,9 +82,42 @@ class SettingsViewModel(
         viewModelScope.launch { userPrefs.setBiometric(enabled) }
     }
 
-    // <--- ADDED THIS FUNCTION
     fun setPrivacy(enabled: Boolean) {
         viewModelScope.launch { userPrefs.setPrivacy(enabled) }
+    }
+
+    fun setShowLastActivity(enabled: Boolean) {
+        viewModelScope.launch { userPrefs.setShowLastActivity(enabled) }
+    }
+
+    // --- TAG MANAGEMENT ---
+    fun renameTag(tag: Tag, newName: String) {
+        viewModelScope.launch {
+            repository.updateTag(tag.copy(name = newName))
+        }
+    }
+
+    fun deleteTag(tag: Tag) {
+        viewModelScope.launch {
+            repository.deleteTag(tag)
+        }
+    }
+
+    // --- ARCHIVE MANAGEMENT ---
+    fun unarchivePerson(personId: Long) {
+        viewModelScope.launch {
+            repository.unarchivePerson(personId)
+        }
+    }
+
+    fun deletePerson(personId: Long) {
+        viewModelScope.launch {
+            val people = archivedPeople.value
+            val person = people.find { it.person.id == personId }?.person
+            if (person != null) {
+                repository.deletePerson(person)
+            }
+        }
     }
 
     // --- BACKUP / RESTORE ---

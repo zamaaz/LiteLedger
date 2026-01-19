@@ -51,7 +51,7 @@ class MainActivity : FragmentActivity() {
         enableEdgeToEdge()
 
         val db = AppDatabase.getDatabase(applicationContext)
-        val repository = LedgerRepository(db.dao())
+        val repository = LedgerRepository(db.dao(), db.tagDao(), db.settlementDao())
         val userPrefs = UserPreferencesRepository(applicationContext)
 
         setContent {
@@ -155,54 +155,79 @@ class MainActivity : FragmentActivity() {
                             }
                         ) {
                             composable<DashboardRoute> {
-                                val viewModel = viewModel<DashboardViewModel>(factory = DashboardViewModelFactory(repository))
-                                val state by viewModel.state.collectAsState()
-                                val searchQuery by viewModel.searchQuery.collectAsState()
+                            val viewModel = viewModel<DashboardViewModel>(factory = DashboardViewModelFactory(repository, userPrefs))
+                            val state by viewModel.state.collectAsState()
+                            val searchQuery by viewModel.searchQuery.collectAsState()
+                            val sortOption by viewModel.sortOption.collectAsState()
 
-                                DashboardScreen(
-                                    state = state,
-                                    searchQuery = searchQuery,
-                                    hapticsEnabled = settingsState.hapticsEnabled,
-                                    onSearchQueryChange = { viewModel.onSearchQueryChange(it) },
-                                    onAddPerson = { name -> viewModel.addPerson(name) },
-                                    onRenamePerson = { id, name -> viewModel.renamePerson(id, name) },
-                                    onPersonClick = { id ->
-                                        val name = state.people.find { it.person.id == id }?.person?.name ?: ""
-                                        navController.navigate(DetailRoute(id, name))
-                                    },
-                                    onDeletePerson = { id -> viewModel.deletePerson(id) },
-                                    onSettingsClick = { navController.navigate(SettingsRoute) },
-                                    onValidateName = { name -> viewModel.validatePersonName(name) },
-                                    initialAction = launchAction,
-                                    onActionConsumed = { launchAction = null },
-                                    isPrivacyMode = settingsState.isPrivacyEnabled,
-                                )
-                            }
+                            DashboardScreen(
+                                state = state,
+                                searchQuery = searchQuery,
+                                hapticsEnabled = settingsState.hapticsEnabled,
+                                showLastActivity = settingsState.showLastActivity,
+                                currentSortOption = sortOption,
+                                onSortOptionChange = { viewModel.setSortOption(it) },
+                                onSearchQueryChange = { viewModel.onSearchQueryChange(it) },
+                                onAddPerson = { name, isTemporary -> viewModel.addPerson(name, isTemporary) },
+                                onRenamePerson = { id, name -> viewModel.renamePerson(id, name) },
+                                onPersonClick = { id ->
+                                    val name = state.people.find { it.person.id == id }?.person?.name ?: ""
+                                    navController.navigate(DetailRoute(id, name))
+                                },
+                                onDeletePerson = { id -> viewModel.deletePerson(id) },
+                                onSettingsClick = { navController.navigate(SettingsRoute) },
+                                onValidateName = { name -> viewModel.validatePersonName(name) },
+                                initialAction = launchAction,
+                                onActionConsumed = { launchAction = null },
+                                isPrivacyMode = settingsState.isPrivacyEnabled,
+                            )
+                        }
                             composable<DetailRoute> { backStackEntry ->
                                 val route: DetailRoute = backStackEntry.toRoute()
                                 val viewModel = viewModel<DetailViewModel>(factory = DetailViewModelFactory(repository, route.id))
                                 val state by viewModel.state.collectAsState()
+                                val allTags by viewModel.allTags.collectAsState()
+                                val recentTags by viewModel.recentTags.collectAsState()
                                 DetailScreen(
                                     personName = route.name,
                                     state = state,
+                                    allTags = allTags,
+                                    recentTags = recentTags,
                                     hapticsEnabled = settingsState.hapticsEnabled,
                                     onBack = { navController.popBackStack() },
-                                    onAddTransaction = { amount, type, note, date ->
-                                        viewModel.addTransaction(amount, type, note, date)
+                                    onAddTransaction = { amount, type, note, date, dueDate, tagIds ->
+                                        viewModel.addTransaction(amount, type, note, date, dueDate, tagIds)
                                     },
                                     onDeleteTransaction = { txn -> viewModel.deleteTransaction(txn) },
-                                    onEditTransaction = { txn -> viewModel.updateTransaction(txn) }
+                                    onEditTransaction = { txn, tagIds -> viewModel.updateTransaction(txn, tagIds) },
+                                    onCreateTag = { name -> viewModel.createTag(name) },
+                                    // Settlement callbacks
+                                    getEligibleSettlementTargets = { type -> viewModel.getEligibleSettlementTargets(type) },
+                                    onAddTransactionWithSettlements = { amount, type, note, date, dueDate, tagIds, settlements ->
+                                        viewModel.addTransactionWithSettlements(amount, type, note, date, dueDate, tagIds, settlements)
+                                    },
+                                    onUpdateSettlements = { txnId, settlements -> viewModel.updateSettlements(txnId, settlements) },
+                                    // Smart statement callback
+                                    getSmartStatementData = { viewModel.getSmartStatementData() }
                                 )
                             }
                             composable<SettingsRoute> {
                                 val context = androidx.compose.ui.platform.LocalContext.current
+                                val archivedPeople by settingsViewModel.archivedPeople.collectAsState()
 
                                 SettingsScreen(
                                     viewModel = settingsViewModel,
                                     onBack = { navController.popBackStack() },
                                     isPrivacyMode = settingsState.isPrivacyEnabled,
                                     onPrivacyToggle = { settingsViewModel.setPrivacy(it) },
-                                    onExportClick = { settingsViewModel.exportData(context) }
+                                    onExportClick = { settingsViewModel.exportData(context) },
+                                    archivedCount = archivedPeople.size,
+                                    archivedPeople = archivedPeople,
+                                    onUnarchive = { settingsViewModel.unarchivePerson(it) },
+                                    onDeletePerson = { settingsViewModel.deletePerson(it) },
+                                    onPersonClick = { id, name -> 
+                                        navController.navigate(DetailRoute(id, name)) 
+                                    }
                                 )
                             }
                         }
