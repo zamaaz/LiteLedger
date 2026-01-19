@@ -20,6 +20,8 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
+      - run: chmod +x gradlew
+
       - name: Decode Keystore
         run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > app/keystore.jks
 
