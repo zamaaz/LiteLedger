@@ -6,28 +6,46 @@ import androidx.lifecycle.viewModelScope
 import com.liteledger.app.data.LedgerRepository
 import com.liteledger.app.data.PersonWithBalance
 import com.liteledger.app.data.SortOption
+import com.liteledger.app.data.Tag
+import com.liteledger.app.data.Transaction
+import com.liteledger.app.data.TransactionType
 import com.liteledger.app.data.UserPreferencesRepository
+import kotlin.math.abs
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.flowOn
-import kotlin.math.abs
 
 data class DashboardState(
-    val people: List<PersonWithBalance> = emptyList(),
-    val totalReceive: Long = 0,
-    val totalPay: Long = 0
+        val people: List<PersonWithBalance> = emptyList(),
+        val totalReceive: Long = 0,
+        val totalPay: Long = 0
 )
 
 class DashboardViewModel(
-    private val repository: LedgerRepository,
-    private val userPrefs: UserPreferencesRepository
+        private val repository: LedgerRepository,
+        private val userPrefs: UserPreferencesRepository
 ) : ViewModel() {
+
+    // --- TAG STATE ---
+    val allTags: StateFlow<List<Tag>> =
+            repository.allTags.stateIn(
+                    viewModelScope,
+                    SharingStarted.WhileSubscribed(5000),
+                    emptyList()
+            )
+
+    val recentTags: StateFlow<List<Tag>> =
+            repository.recentTags.stateIn(
+                    viewModelScope,
+                    SharingStarted.WhileSubscribed(5000),
+                    emptyList()
+            )
 
     // Search State
     private val _searchQuery = MutableStateFlow("")
@@ -38,67 +56,75 @@ class DashboardViewModel(
     val sortOption: StateFlow<SortOption> = _sortOption.asStateFlow()
 
     init {
-        viewModelScope.launch {
-            userPrefs.sortOptionFlow.collect { _sortOption.value = it }
-        }
+        viewModelScope.launch { userPrefs.sortOptionFlow.collect { _sortOption.value = it } }
     }
 
     // Combine the DB data with Search Query and Sort Option
-    val state: StateFlow<DashboardState> = combine(
-        repository.personsWithBalances,
-        _searchQuery,
-        _sortOption
-    ) { list, query, sort ->
-        val totalReceive = list.filter { it.balance > 0 }.sumOf { it.balance }
-        val totalPay = list.filter { it.balance < 0 }.sumOf { it.balance }
+    val state: StateFlow<DashboardState> =
+            combine(repository.personsWithBalances, _searchQuery, _sortOption) { list, query, sort
+                        ->
+                        val totalReceive = list.filter { it.balance > 0 }.sumOf { it.balance }
+                        val totalPay = list.filter { it.balance < 0 }.sumOf { it.balance }
 
-        val filteredList = if (query.isBlank()) {
-            list
-        } else {
-            list.filter { it.person.name.contains(query, ignoreCase = true) }
-        }
+                        val filteredList =
+                                if (query.isBlank()) {
+                                    list
+                                } else {
+                                    list.filter {
+                                        it.person.name.contains(query, ignoreCase = true)
+                                    }
+                                }
 
-        val sortedList = sortPeople(filteredList, sort)
+                        val sortedList = sortPeople(filteredList, sort)
 
-        DashboardState(
-            people = sortedList,
-            totalReceive = totalReceive,
-            totalPay = totalPay
-        )
-    }
-    .flowOn(Dispatchers.Default)
-    .stateIn(
-        scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
-        initialValue = DashboardState()
-    )
+                        DashboardState(
+                                people = sortedList,
+                                totalReceive = totalReceive,
+                                totalPay = totalPay
+                        )
+                    }
+                    .flowOn(Dispatchers.Default)
+                    .stateIn(
+                            scope = viewModelScope,
+                            started = SharingStarted.WhileSubscribed(5000),
+                            initialValue = DashboardState()
+                    )
 
-    private fun sortPeople(list: List<PersonWithBalance>, option: SortOption): List<PersonWithBalance> {
+    private fun sortPeople(
+            list: List<PersonWithBalance>,
+            option: SortOption
+    ): List<PersonWithBalance> {
         return when (option) {
-            SortOption.RECENT_ACTIVITY -> list.sortedWith(
-                compareByDescending<PersonWithBalance> { it.lastActivityAt ?: Long.MIN_VALUE }
-                    .thenBy { it.person.name.lowercase() }
-            )
-            SortOption.OLDEST_ACTIVITY -> list.sortedWith(
-                compareBy<PersonWithBalance> { it.lastActivityAt ?: Long.MAX_VALUE }
-                    .thenBy { it.person.name.lowercase() }
-            )
-            SortOption.HIGHEST_AMOUNT -> list.sortedWith(
-                compareByDescending<PersonWithBalance> { abs(it.balance) }
-                    .thenByDescending { it.lastActivityAt ?: Long.MIN_VALUE }
-            )
-            SortOption.LOWEST_AMOUNT -> list.sortedWith(
-                compareBy<PersonWithBalance> { abs(it.balance) }
-                    .thenByDescending { it.lastActivityAt ?: Long.MIN_VALUE }
-            )
-            SortOption.NAME_AZ -> list.sortedWith(
-                compareBy { it.person.name.lowercase() }
-            )
-            SortOption.UNSETTLED_FIRST -> list.sortedWith(
-                compareByDescending<PersonWithBalance> { it.balance != 0L }
-                    .thenByDescending { it.lastActivityAt ?: Long.MIN_VALUE }
-                    .thenBy { it.person.name.lowercase() }
-            )
+            SortOption.RECENT_ACTIVITY ->
+                    list.sortedWith(
+                            compareByDescending<PersonWithBalance> {
+                                it.lastActivityAt ?: Long.MIN_VALUE
+                            }
+                                    .thenBy { it.person.name.lowercase() }
+                    )
+            SortOption.OLDEST_ACTIVITY ->
+                    list.sortedWith(
+                            compareBy<PersonWithBalance> { it.lastActivityAt ?: Long.MAX_VALUE }
+                                    .thenBy { it.person.name.lowercase() }
+                    )
+            SortOption.HIGHEST_AMOUNT ->
+                    list.sortedWith(
+                            compareByDescending<PersonWithBalance> { abs(it.balance) }
+                                    .thenByDescending { it.lastActivityAt ?: Long.MIN_VALUE }
+                    )
+            SortOption.LOWEST_AMOUNT ->
+                    list.sortedWith(
+                            compareBy<PersonWithBalance> { abs(it.balance) }.thenByDescending {
+                                it.lastActivityAt ?: Long.MIN_VALUE
+                            }
+                    )
+            SortOption.NAME_AZ -> list.sortedWith(compareBy { it.person.name.lowercase() })
+            SortOption.UNSETTLED_FIRST ->
+                    list.sortedWith(
+                            compareByDescending<PersonWithBalance> { it.balance != 0L }
+                                    .thenByDescending { it.lastActivityAt ?: Long.MIN_VALUE }
+                                    .thenBy { it.person.name.lowercase() }
+                    )
         }
     }
 
@@ -138,14 +164,38 @@ class DashboardViewModel(
             }
         }
     }
+
+    // --- TAG OPERATIONS ---
+    fun createTag(name: String) {
+        viewModelScope.launch { repository.addTag(name.trim()) }
+    }
+
+    fun saveSplitTransactions(splitData: List<SplitTransactionData>) {
+        viewModelScope.launch {
+            splitData.forEach { data ->
+                val transaction =
+                        Transaction(
+                                personId = data.personId,
+                                amount = data.amount,
+                                type = TransactionType.GAVE, // User "gave" on their behalf
+                                date = data.date,
+                                note = data.note,
+                                dueDate = data.dueDate
+                        )
+                val txnId = repository.addTransaction(transaction)
+                if (data.tagIds.isNotEmpty()) {
+                    repository.setTagsForTransaction(txnId, data.tagIds)
+                }
+            }
+        }
+    }
 }
 
 class DashboardViewModelFactory(
-    private val repository: LedgerRepository,
-    private val userPrefs: UserPreferencesRepository
+        private val repository: LedgerRepository,
+        private val userPrefs: UserPreferencesRepository
 ) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        @Suppress("UNCHECKED_CAST")
-        return DashboardViewModel(repository, userPrefs) as T
+        @Suppress("UNCHECKED_CAST") return DashboardViewModel(repository, userPrefs) as T
     }
 }

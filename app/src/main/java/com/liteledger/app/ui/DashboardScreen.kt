@@ -4,8 +4,9 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -16,6 +17,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -24,6 +26,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.CallSplit
 import androidx.compose.material.icons.automirrored.outlined.Sort
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.outlined.*
@@ -45,7 +48,6 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.Dp
@@ -56,37 +58,41 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.liteledger.app.data.PersonWithBalance
 import com.liteledger.app.data.SortOption
+import com.liteledger.app.data.Tag
 import com.liteledger.app.data.displayName
 import com.liteledger.app.ui.theme.*
-import com.liteledger.app.utils.rememberAppHaptic
 import com.liteledger.app.utils.Formatters
 import com.liteledger.app.utils.PrivacyText
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
+import com.liteledger.app.utils.rememberAppHaptic
 import kotlin.math.abs
 import kotlin.math.roundToInt
-
-
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DashboardScreen(
-    state: DashboardState,
-    searchQuery: String,
-    hapticsEnabled: Boolean,
-    showLastActivity: Boolean,
-    currentSortOption: SortOption,
-    onSortOptionChange: (SortOption) -> Unit,
-    onSearchQueryChange: (String) -> Unit,
-    onAddPerson: (String, Boolean) -> Unit,
-    onRenamePerson: (Long, String) -> Unit,
-    onPersonClick: (Long) -> Unit,
-    onDeletePerson: (Long) -> Unit,
-    onSettingsClick: () -> Unit,
-    onValidateName: suspend (String) -> Boolean,
-    isPrivacyMode: Boolean,
-    initialAction: String?,
-    onActionConsumed: () -> Unit,
+        state: DashboardState,
+        searchQuery: String,
+        hapticsEnabled: Boolean,
+        showLastActivity: Boolean,
+        currentSortOption: SortOption,
+        onSortOptionChange: (SortOption) -> Unit,
+        onSearchQueryChange: (String) -> Unit,
+        onAddPerson: (String, Boolean) -> Unit,
+        onRenamePerson: (Long, String) -> Unit,
+        onPersonClick: (Long) -> Unit,
+        onDeletePerson: (Long) -> Unit,
+        onSettingsClick: () -> Unit,
+        onValidateName: suspend (String) -> Boolean,
+        isPrivacyMode: Boolean,
+        initialAction: String?,
+        onActionConsumed: () -> Unit,
+        // Split transaction support
+        allTags: List<Tag> = emptyList(),
+        recentTags: List<Tag> = emptyList(),
+        onSaveSplitTransactions: (List<SplitTransactionData>) -> Unit = {},
+        onCreateTag: (String) -> Unit = {},
 ) {
     var showInputSheet by remember { mutableStateOf(false) }
     var selectedPersonId by remember { mutableStateOf<Long?>(null) }
@@ -95,6 +101,10 @@ fun DashboardScreen(
     var showDeleteConfirmation by remember { mutableStateOf(false) }
     var isSearchActive by remember { mutableStateOf(false) }
     var showSortSheet by remember { mutableStateOf(false) }
+
+    // --- SPLIT TRANSACTION STATE ---
+    var showSplitSheet by remember { mutableStateOf(false) }
+    var fabExpanded by remember { mutableStateOf(false) }
 
     // --- SPRING EFFECT STATE ---
     var swipingCardIndex by remember { mutableStateOf<Int?>(null) }
@@ -125,17 +135,27 @@ fun DashboardScreen(
     var topBarOffsetHeightPx by remember { mutableFloatStateOf(0f) }
 
     // 4. Calculate actual height
-    val topBarHeightPx = (maxTopBarHeightPx + topBarOffsetHeightPx).coerceIn(minTopBarHeightPx, maxTopBarHeightPx)
+    val topBarHeightPx =
+            (maxTopBarHeightPx + topBarOffsetHeightPx).coerceIn(
+                    minTopBarHeightPx,
+                    maxTopBarHeightPx
+            )
 
-    val collapseFraction by remember(minTopBarHeightPx, maxTopBarHeightPx) {
-        derivedStateOf {
-            val scrollRange = maxTopBarHeightPx - minTopBarHeightPx
-            if (scrollRange == 0f) 0f else {
-                val currentHeight = (maxTopBarHeightPx + topBarOffsetHeightPx).coerceIn(minTopBarHeightPx, maxTopBarHeightPx)
-                1f - ((currentHeight - minTopBarHeightPx) / scrollRange).coerceIn(0f, 1f)
+    val collapseFraction by
+            remember(minTopBarHeightPx, maxTopBarHeightPx) {
+                derivedStateOf {
+                    val scrollRange = maxTopBarHeightPx - minTopBarHeightPx
+                    if (scrollRange == 0f) 0f
+                    else {
+                        val currentHeight =
+                                (maxTopBarHeightPx + topBarOffsetHeightPx).coerceIn(
+                                        minTopBarHeightPx,
+                                        maxTopBarHeightPx
+                                )
+                        1f - ((currentHeight - minTopBarHeightPx) / scrollRange).coerceIn(0f, 1f)
+                    }
+                }
             }
-        }
-    }
 
     val nestedScrollConnection = remember {
         object : NestedScrollConnection {
@@ -145,7 +165,10 @@ fun DashboardScreen(
                 val isScrollingDown = delta < 0
                 val scrollRange = minPxState.value - maxPxState.value
 
-                if (!isScrollingDown && (lazyListState.firstVisibleItemIndex > 0 || lazyListState.firstVisibleItemScrollOffset > 0)) {
+                if (!isScrollingDown &&
+                                (lazyListState.firstVisibleItemIndex > 0 ||
+                                        lazyListState.firstVisibleItemScrollOffset > 0)
+                ) {
                     return Offset.Zero
                 }
 
@@ -163,9 +186,10 @@ fun DashboardScreen(
             val midpoint = scrollRange / 2f
             val targetOffset = if (topBarOffsetHeightPx > midpoint) 0f else scrollRange
             if (topBarOffsetHeightPx != targetOffset) {
-                Animatable(topBarOffsetHeightPx).animateTo(targetOffset, animationSpec = spring(stiffness = Spring.StiffnessMedium)) {
-                    topBarOffsetHeightPx = value
-                }
+                Animatable(topBarOffsetHeightPx).animateTo(
+                                targetOffset,
+                                animationSpec = spring(stiffness = Spring.StiffnessMedium)
+                        ) { topBarOffsetHeightPx = value }
             }
         }
     }
@@ -191,25 +215,31 @@ fun DashboardScreen(
     }
 
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.surfaceContainerLowest)
-            .nestedScroll(nestedScrollConnection)
+            modifier =
+                    Modifier.fillMaxSize()
+                            .background(MaterialTheme.colorScheme.surfaceContainerLowest)
+                            .nestedScroll(nestedScrollConnection)
     ) {
-        val navigationBarPadding = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+        val navigationBarPadding =
+                WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
         LazyColumn(
-            state = lazyListState,
-            contentPadding = PaddingValues(
-                top = with(density) { topBarHeightPx.toDp() + 16.dp },
-                start = 16.dp, end = 16.dp, bottom = 100.dp + navigationBarPadding
-            ),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-            modifier = Modifier.fillMaxSize()
+                state = lazyListState,
+                contentPadding =
+                        PaddingValues(
+                                top = with(density) { topBarHeightPx.toDp() + 16.dp },
+                                start = 16.dp,
+                                end = 16.dp,
+                                bottom = 100.dp + navigationBarPadding
+                        ),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.fillMaxSize()
         ) {
             item {
-                AnimatedVisibility(visible = !isSearchActive && state.people.isNotEmpty(), enter = expandVertically(), exit = shrinkVertically()) {
-                    Column { ReportCard(state.totalReceive, state.totalPay, isPrivacyMode) }
-                }
+                AnimatedVisibility(
+                        visible = !isSearchActive && state.people.isNotEmpty(),
+                        enter = expandVertically(),
+                        exit = shrinkVertically()
+                ) { Column { ReportCard(state.totalReceive, state.totalPay, isPrivacyMode) } }
             }
 
             item {
@@ -221,48 +251,59 @@ fun DashboardScreen(
             item {
                 if (!isSearchActive && state.people.isNotEmpty()) {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         // 1. the "fake" search bar
                         Surface(
-                            onClick = { isSearchActive = true }, // triggers the real search view
-                            shape = CircleShape, // perfectly matches the sort button roundedness
-                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(56.dp) // explicit height matches the sort button perfectly
-                        ) {
+                                onClick = {
+                                    isSearchActive = true
+                                }, // triggers the real search view
+                                shape = CircleShape, // perfectly matches
+                                // the sort button
+                                // roundedness
+                                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                modifier =
+                                        Modifier.weight(1f).height(56.dp) // explicit height matches
+                                // the sort button
+                                // perfectly
+                                ) {
                             Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(horizontal = 16.dp)
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 16.dp)
                             ) {
                                 Icon(
-                                    imageVector = Icons.Outlined.Search,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                        imageVector = Icons.Outlined.Search,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                                 Spacer(modifier = Modifier.width(16.dp))
                                 Text(
-                                    text = "Search people...",
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        text = "Search people...",
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
 
                         // 2. the sort button
                         FilledIconButton(
-                            onClick = { haptic.click(); showSortSheet = true },
-                            modifier = Modifier.size(56.dp), // same height as the fake bar
-                            colors = IconButtonDefaults.filledIconButtonColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
-                            )
+                                onClick = {
+                                    haptic.click()
+                                    showSortSheet = true
+                                },
+                                modifier = Modifier.size(56.dp), // same height as the fake bar
+                                colors =
+                                        IconButtonDefaults.filledIconButtonColors(
+                                                containerColor =
+                                                        MaterialTheme.colorScheme
+                                                                .surfaceContainerHigh
+                                        )
                         ) {
                             Icon(
-                                imageVector = Icons.AutoMirrored.Outlined.Sort,
-                                contentDescription = "Sort"
+                                    imageVector = Icons.AutoMirrored.Outlined.Sort,
+                                    contentDescription = "Sort"
                             )
                         }
                     }
@@ -277,126 +318,155 @@ fun DashboardScreen(
 
             if (!isSearchActive) {
                 if (state.people.isNotEmpty()) {
-                    itemsIndexed(
-                        items = state.people,
-                        key = { _, item -> item.person.id }
-                    ) { index, person ->
-                        val shape = when {
-                            state.people.size == 1 -> SingleItemShape
-                            index == 0 -> TopItemShape
-                            index == state.people.size - 1 -> BottomItemShape
-                            else -> MiddleItemShape
-                        }
+                    itemsIndexed(items = state.people, key = { _, item -> item.person.id }) {
+                            index,
+                            person ->
+                        val shape =
+                                when {
+                                    state.people.size == 1 -> SingleItemShape
+                                    index == 0 -> TopItemShape
+                                    index == state.people.size - 1 -> BottomItemShape
+                                    else -> MiddleItemShape
+                                }
 
                         // --- SPRING EFFECT FOR NEIGHBORS (HORIZONTAL) ---
-                        val springOffsetX by animateFloatAsState(
-                            targetValue = if (swipingCardIndex != null && index != swipingCardIndex) {
-                                val distance = abs(index - swipingCardIndex!!)
-                                val maxSpringPx = with(density) { 12.dp.toPx() }
-                                val factor = (1f / (distance.toFloat() + 1f)) * abs(swipeProgress).coerceIn(0f, 1f)
-                                // Follow the swipe direction (positive = right, negative = left)
-                                val direction = if (swipeProgress >= 0) 1f else -1f
-                                maxSpringPx * factor * direction
-                            } else 0f,
-                            animationSpec = spring(
-                                dampingRatio = Spring.DampingRatioLowBouncy,
-                                stiffness = Spring.StiffnessMedium
-                            ),
-                            label = "SpringOffsetX"
-                        )
+                        val springOffsetX by
+                                animateFloatAsState(
+                                        targetValue =
+                                                if (swipingCardIndex != null &&
+                                                                index != swipingCardIndex
+                                                ) {
+                                                    val distance = abs(index - swipingCardIndex!!)
+                                                    val maxSpringPx = with(density) { 12.dp.toPx() }
+                                                    val factor =
+                                                            (1f / (distance.toFloat() + 1f)) *
+                                                                    abs(swipeProgress)
+                                                                            .coerceIn(0f, 1f)
+                                                    // Follow the swipe
+                                                    // direction
+                                                    // (positive =
+                                                    // right,
+                                                    // negative = left)
+                                                    val direction =
+                                                            if (swipeProgress >= 0) 1f else -1f
+                                                    maxSpringPx * factor * direction
+                                                } else 0f,
+                                        animationSpec =
+                                                spring(
+                                                        dampingRatio = Spring.DampingRatioLowBouncy,
+                                                        stiffness = Spring.StiffnessMedium
+                                                ),
+                                        label = "SpringOffsetX"
+                                )
 
                         SwipeablePersonCard(
-                            item = person,
-                            index = index,
-                            shape = shape,
-                            springOffsetX = springOffsetX,
-                            showLastActivity = showLastActivity,
-                            onSwipeStart = { idx -> swipingCardIndex = idx },
-                            onSwipeProgress = { progress -> swipeProgress = progress },
-                            onSwipeEnd = { swipingCardIndex = null; swipeProgress = 0f },
-                            onRename = {
-                                haptic.success()
-                                selectedPersonId = person.person.id
-                                selectedPersonName = person.person.name
-                                isRenaming = true
-                                showInputSheet = true
-                            },
-                            onDelete = {
-                                haptic.warning()
-                                selectedPersonId = person.person.id
-                                showDeleteConfirmation = true
-                            },
-                            onClick = { haptic.click(); onPersonClick(person.person.id) },
-                            onLongPress = {
-                                haptic.heavy()
-                                selectedPersonId = person.person.id
-                                selectedPersonName = person.person.name
-                            }
+                                item = person,
+                                index = index,
+                                shape = shape,
+                                springOffsetX = springOffsetX,
+                                showLastActivity = showLastActivity,
+                                onSwipeStart = { idx -> swipingCardIndex = idx },
+                                onSwipeProgress = { progress -> swipeProgress = progress },
+                                onSwipeEnd = {
+                                    swipingCardIndex = null
+                                    swipeProgress = 0f
+                                },
+                                onRename = {
+                                    haptic.success()
+                                    selectedPersonId = person.person.id
+                                    selectedPersonName = person.person.name
+                                    isRenaming = true
+                                    showInputSheet = true
+                                },
+                                onDelete = {
+                                    haptic.warning()
+                                    selectedPersonId = person.person.id
+                                    showDeleteConfirmation = true
+                                },
+                                onClick = {
+                                    haptic.click()
+                                    onPersonClick(person.person.id)
+                                },
+                                onLongPress = {
+                                    haptic.heavy()
+                                    selectedPersonId = person.person.id
+                                    selectedPersonName = person.person.name
+                                }
                         )
                     }
                 } else {
-                    item {
-                        Box(modifier = Modifier.fillParentMaxSize()) {
-                            EmptyState()
-                        }
-                    }
+                    item { Box(modifier = Modifier.fillParentMaxSize()) { EmptyState() } }
                 }
             }
         }
 
         AnimatedVisibility(
-            visible = isSearchActive,
-            enter = fadeIn(animationSpec = spring(stiffness = Spring.StiffnessMedium)) +
-                    scaleIn(initialScale = 0.9f, animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) +
-                    expandVertically(expandFrom = Alignment.Top),
-            exit = fadeOut(animationSpec = spring(stiffness = Spring.StiffnessMedium)) +
-                    scaleOut(targetScale = 0.9f, animationSpec = spring(stiffness = Spring.StiffnessMedium)) +
-                    shrinkVertically(shrinkTowards = Alignment.Top),
-            modifier = Modifier.zIndex(10f)
+                visible = isSearchActive,
+                enter =
+                        fadeIn(animationSpec = spring(stiffness = Spring.StiffnessMedium)) +
+                                scaleIn(
+                                        initialScale = 0.9f,
+                                        animationSpec =
+                                                spring(stiffness = Spring.StiffnessMediumLow)
+                                ) +
+                                expandVertically(expandFrom = Alignment.Top),
+                exit =
+                        fadeOut(animationSpec = spring(stiffness = Spring.StiffnessMedium)) +
+                                scaleOut(
+                                        targetScale = 0.9f,
+                                        animationSpec = spring(stiffness = Spring.StiffnessMedium)
+                                ) +
+                                shrinkVertically(shrinkTowards = Alignment.Top),
+                modifier = Modifier.zIndex(10f)
         ) {
             Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.surfaceContainerLowest)
+                    modifier =
+                            Modifier.fillMaxSize()
+                                    .background(MaterialTheme.colorScheme.surfaceContainerLowest)
             ) {
                 SearchBar(
-                    query = searchQuery,
-                    onQueryChange = onSearchQueryChange,
-                    onSearch = {},
-                    active = true,
-                    onActiveChange = {
-                        if (!it) {
-                            isSearchActive = false
-                            onSearchQueryChange("")
-                            topBarOffsetHeightPx = 0f
-                        }
-                    },
-                    placeholder = { Text("Search people...") },
-                    leadingIcon = {
-                        IconButton(onClick = {
-                            isSearchActive = false
-                            onSearchQueryChange("")
-                            topBarOffsetHeightPx = 0f
-                        }) {
-                            Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back")
-                        }
-                    },
-                    trailingIcon = {
-                        if (searchQuery.isNotEmpty()) {
-                            IconButton(onClick = { onSearchQueryChange("") }) { Icon(Icons.Outlined.Close, "Clear") }
-                        }
-                    },
-                    colors = SearchBarDefaults.colors(
-                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        dividerColor = MaterialTheme.colorScheme.outlineVariant,
-                        inputFieldColors = TextFieldDefaults.colors(
-                            focusedTextColor = MaterialTheme.colorScheme.onSurface,
-                            unfocusedTextColor = MaterialTheme.colorScheme.onSurface
-                        )
-                    ),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .focusRequester(focusRequester)
+                        query = searchQuery,
+                        onQueryChange = onSearchQueryChange,
+                        onSearch = {},
+                        active = true,
+                        onActiveChange = {
+                            if (!it) {
+                                isSearchActive = false
+                                onSearchQueryChange("")
+                                topBarOffsetHeightPx = 0f
+                            }
+                        },
+                        placeholder = { Text("Search people...") },
+                        leadingIcon = {
+                            IconButton(
+                                    onClick = {
+                                        isSearchActive = false
+                                        onSearchQueryChange("")
+                                        topBarOffsetHeightPx = 0f
+                                    }
+                            ) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") }
+                        },
+                        trailingIcon = {
+                            if (searchQuery.isNotEmpty()) {
+                                IconButton(onClick = { onSearchQueryChange("") }) {
+                                    Icon(Icons.Outlined.Close, "Clear")
+                                }
+                            }
+                        },
+                        colors =
+                                SearchBarDefaults.colors(
+                                        containerColor =
+                                                MaterialTheme.colorScheme.surfaceContainerHigh,
+                                        dividerColor = MaterialTheme.colorScheme.outlineVariant,
+                                        inputFieldColors =
+                                                TextFieldDefaults.colors(
+                                                        focusedTextColor =
+                                                                MaterialTheme.colorScheme.onSurface,
+                                                        unfocusedTextColor =
+                                                                MaterialTheme.colorScheme.onSurface
+                                                )
+                                ),
+                        modifier = Modifier.fillMaxWidth().focusRequester(focusRequester)
                 ) {
                     if (searchQuery.isEmpty()) {
                         SearchInitialState()
@@ -405,33 +475,38 @@ fun DashboardScreen(
                             SearchNotFoundState()
                         } else {
                             LazyColumn(
-                                contentPadding = PaddingValues(16.dp),
-                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                                    contentPadding = PaddingValues(16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(2.dp)
                             ) {
                                 itemsIndexed(
-                                    items = state.people,
-                                    key = { _, item -> item.person.id }
+                                        items = state.people,
+                                        key = { _, item -> item.person.id }
                                 ) { index, person ->
-                                    val shape = when {
-                                        state.people.size == 1 -> SingleItemShape
-                                        index == 0 -> TopItemShape
-                                        index == state.people.size - 1 -> BottomItemShape
-                                        else -> MiddleItemShape
-                                    }
+                                    val shape =
+                                            when {
+                                                state.people.size == 1 -> SingleItemShape
+                                                index == 0 -> TopItemShape
+                                                index == state.people.size - 1 -> BottomItemShape
+                                                else -> MiddleItemShape
+                                            }
 
                                     PersonRow(
-                                        item = person,
-                                        onClick = {
-                                            haptic.click()
-                                            onPersonClick(it)
-                                            scope.launch {
-                                                delay(300)
-                                                isSearchActive = false
-                                                onSearchQueryChange("")
-                                            }
-                                        },
-                                        onLongPress = { haptic.heavy(); selectedPersonId = it; selectedPersonName = person.person.name },
-                                        shape = shape
+                                            item = person,
+                                            onClick = {
+                                                haptic.click()
+                                                onPersonClick(it)
+                                                scope.launch {
+                                                    delay(300)
+                                                    isSearchActive = false
+                                                    onSearchQueryChange("")
+                                                }
+                                            },
+                                            onLongPress = {
+                                                haptic.heavy()
+                                                selectedPersonId = it
+                                                selectedPersonName = person.person.name
+                                            },
+                                            shape = shape
                                     )
                                 }
                             }
@@ -443,42 +518,190 @@ fun DashboardScreen(
 
         if (!isSearchActive) {
             CustomDashboardTopBar(
-                height = with(density) { topBarHeightPx.toDp() },
-                fraction = collapseFraction,
-                statusBarHeight = statusBarHeight,
-                onSettingsClick = onSettingsClick
+                    height = with(density) { topBarHeightPx.toDp() },
+                    fraction = collapseFraction,
+                    statusBarHeight = statusBarHeight,
+                    onSettingsClick = onSettingsClick
             )
 
-            FloatingActionButton(
-                onClick = { haptic.click(); isRenaming = false; selectedPersonName = ""; showInputSheet = true },
-                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                shape = MaterialTheme.shapes.extraLarge,
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .navigationBarsPadding()
-                    .padding(24.dp)
-            ) { Icon(Icons.Outlined.Add, "Add") }
+            // --- EXPANDABLE SPEED DIAL FAB ---
+            // Scrim overlay when expanded
+            AnimatedVisibility(
+                    visible = fabExpanded,
+                    enter = fadeIn(animationSpec = spring(stiffness = Spring.StiffnessMedium)),
+                    exit = fadeOut(animationSpec = spring(stiffness = Spring.StiffnessMedium)),
+                    modifier = Modifier.fillMaxSize()
+            ) {
+                Box(
+                        modifier =
+                                Modifier.fillMaxSize()
+                                        .background(Color.Black.copy(alpha = 0.4f))
+                                        .pointerInput(Unit) {
+                                            detectTapGestures { fabExpanded = false }
+                                        }
+                )
+            }
+
+            // Speed dial actions
+            Column(
+                    modifier =
+                            Modifier.align(Alignment.BottomEnd)
+                                    .navigationBarsPadding()
+                                    .padding(24.dp),
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                // Mini FABs (only visible when expanded)
+                AnimatedVisibility(
+                        visible = fabExpanded,
+                        enter =
+                                fadeIn(animationSpec = spring(stiffness = Spring.StiffnessMedium)) +
+                                        scaleIn(
+                                                initialScale = 0.6f,
+                                                animationSpec =
+                                                        spring(
+                                                                dampingRatio =
+                                                                        Spring.DampingRatioMediumBouncy
+                                                        )
+                                        ),
+                        exit =
+                                fadeOut(animationSpec = spring(stiffness = Spring.StiffnessHigh)) +
+                                        scaleOut(
+                                                targetScale = 0.6f,
+                                                animationSpec =
+                                                        spring(stiffness = Spring.StiffnessHigh)
+                                        )
+                ) {
+                    Column(
+                            horizontalAlignment = Alignment.End,
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        // Split Transaction action
+                        Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = MaterialTheme.colorScheme.inverseSurface
+                            ) {
+                                Text(
+                                        text = "Split Transaction",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = MaterialTheme.colorScheme.inverseOnSurface,
+                                        modifier =
+                                                Modifier.padding(
+                                                        horizontal = 12.dp,
+                                                        vertical = 8.dp
+                                                )
+                                )
+                            }
+                            SmallFloatingActionButton(
+                                    onClick = {
+                                        haptic.click()
+                                        fabExpanded = false
+                                        showSplitSheet = true
+                                    },
+                                    containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                                    contentColor = MaterialTheme.colorScheme.onTertiaryContainer
+                            ) { Icon(Icons.AutoMirrored.Outlined.CallSplit, "Split Transaction") }
+                        }
+
+                        // Add Person action
+                        Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = MaterialTheme.colorScheme.inverseSurface
+                            ) {
+                                Text(
+                                        text = "Add Person",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = MaterialTheme.colorScheme.inverseOnSurface,
+                                        modifier =
+                                                Modifier.padding(
+                                                        horizontal = 12.dp,
+                                                        vertical = 8.dp
+                                                )
+                                )
+                            }
+                            SmallFloatingActionButton(
+                                    onClick = {
+                                        haptic.click()
+                                        fabExpanded = false
+                                        isRenaming = false
+                                        selectedPersonName = ""
+                                        showInputSheet = true
+                                    },
+                                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                            ) { Icon(Icons.Outlined.PersonAdd, "Add Person") }
+                        }
+                    }
+                }
+
+                // Main FAB with animated shape
+                val fabRotation by
+                        animateFloatAsState(
+                                targetValue = if (fabExpanded) 45f else 0f,
+                                animationSpec =
+                                        spring(
+                                                dampingRatio = Spring.DampingRatioMediumBouncy,
+                                                stiffness = Spring.StiffnessMedium
+                                        ),
+                                label = "FabRotation"
+                        )
+
+                // Animate corner radius for shape morph
+                val fabCornerRadius by
+                        animateDpAsState(
+                                targetValue = if (fabExpanded) 16.dp else 28.dp,
+                                animationSpec =
+                                        spring(
+                                                dampingRatio = Spring.DampingRatioMediumBouncy,
+                                                stiffness = Spring.StiffnessMedium
+                                        ),
+                                label = "FabCornerRadius"
+                        )
+
+                FloatingActionButton(
+                        onClick = {
+                            haptic.click()
+                            fabExpanded = !fabExpanded
+                        },
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        shape = RoundedCornerShape(fabCornerRadius)
+                ) {
+                    Icon(
+                            Icons.Outlined.Add,
+                            contentDescription = if (fabExpanded) "Close" else "Add",
+                            modifier = Modifier.graphicsLayer { rotationZ = fabRotation }
+                    )
+                }
+            }
         }
     }
 
     if (showInputSheet) {
         PersonInputSheet(
-            initialName = if (isRenaming) selectedPersonName else "",
-            isRename = isRenaming,
-            onDismiss = {
-                showInputSheet = false
-                selectedPersonId = null
-            },
-            onValidate = onValidateName,
-            onConfirm = { name, isTemporary ->
-                if (isRenaming && selectedPersonId != null) {
-                    onRenamePerson(selectedPersonId!!, name)
+                initialName = if (isRenaming) selectedPersonName else "",
+                isRename = isRenaming,
+                onDismiss = {
+                    showInputSheet = false
                     selectedPersonId = null
-                } else {
-                    onAddPerson(name, isTemporary)
+                },
+                onValidate = onValidateName,
+                onConfirm = { name, isTemporary ->
+                    if (isRenaming && selectedPersonId != null) {
+                        onRenamePerson(selectedPersonId!!, name)
+                        selectedPersonId = null
+                    } else {
+                        onAddPerson(name, isTemporary)
+                    }
+                    showInputSheet = false
                 }
-                showInputSheet = false
-            }
         )
     }
 
@@ -486,28 +709,48 @@ fun DashboardScreen(
         // Fallback for long press if user prefers that, or just remove if Swipe is primary.
         // Keeping it for accessibility/completeness.
         ModalBottomSheet(
-            onDismissRequest = { selectedPersonId = null },
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                onDismissRequest = { selectedPersonId = null },
+                containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
         ) {
             Column(modifier = Modifier.padding(24.dp).navigationBarsPadding()) {
                 Text("Manage Person", style = MaterialTheme.typography.headlineSmall)
                 Spacer(modifier = Modifier.height(24.dp))
                 Row(modifier = Modifier.fillMaxWidth()) {
                     Button(
-                        onClick = { isRenaming = true; showInputSheet = true },
-                        modifier = Modifier.weight(1f).height(56.dp),
-                        shape = SplitLeftShape,
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh, contentColor = MaterialTheme.colorScheme.onSurface)
-                    ) { Icon(Icons.Outlined.Edit, null); Spacer(Modifier.width(8.dp)); Text("Rename") }
+                            onClick = {
+                                isRenaming = true
+                                showInputSheet = true
+                            },
+                            modifier = Modifier.weight(1f).height(56.dp),
+                            shape = SplitLeftShape,
+                            colors =
+                                    ButtonDefaults.buttonColors(
+                                            containerColor =
+                                                    MaterialTheme.colorScheme.surfaceContainerHigh,
+                                            contentColor = MaterialTheme.colorScheme.onSurface
+                                    )
+                    ) {
+                        Icon(Icons.Outlined.Edit, null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Rename")
+                    }
 
                     Spacer(modifier = Modifier.width(4.dp))
 
                     Button(
-                        onClick = { showDeleteConfirmation = true },
-                        modifier = Modifier.weight(1f).height(56.dp),
-                        shape = SplitRightShape,
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                    ) { Icon(Icons.Outlined.Delete, null); Spacer(Modifier.width(8.dp)); Text("Delete") }
+                            onClick = { showDeleteConfirmation = true },
+                            modifier = Modifier.weight(1f).height(56.dp),
+                            shape = SplitRightShape,
+                            colors =
+                                    ButtonDefaults.buttonColors(
+                                            containerColor = MaterialTheme.colorScheme.error
+                                    )
+                    ) {
+                        Icon(Icons.Outlined.Delete, null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Delete")
+                    }
                 }
             }
         }
@@ -515,19 +758,41 @@ fun DashboardScreen(
 
     if (showDeleteConfirmation && selectedPersonId != null) {
         DeleteConfirmationSheet(
-            onDismiss = { showDeleteConfirmation = false; selectedPersonId = null },
-            onConfirm = { onDeletePerson(selectedPersonId!!); showDeleteConfirmation = false; selectedPersonId = null }
+                onDismiss = {
+                    showDeleteConfirmation = false
+                    selectedPersonId = null
+                },
+                onConfirm = {
+                    onDeletePerson(selectedPersonId!!)
+                    showDeleteConfirmation = false
+                    selectedPersonId = null
+                }
         )
     }
 
     if (showSortSheet) {
         SortBottomSheet(
-            currentOption = currentSortOption,
-            onDismiss = { showSortSheet = false },
-            onSelect = { option ->
-                onSortOptionChange(option)
-                showSortSheet = false
-            }
+                currentOption = currentSortOption,
+                onDismiss = { showSortSheet = false },
+                onSelect = { option ->
+                    onSortOptionChange(option)
+                    showSortSheet = false
+                }
+        )
+    }
+
+    // --- SPLIT TRANSACTION SHEET ---
+    if (showSplitSheet) {
+        SplitTransactionSheet(
+                allPeople = state.people,
+                allTags = allTags,
+                recentTags = recentTags,
+                onDismiss = { showSplitSheet = false },
+                onSave = { splitData ->
+                    onSaveSplitTransactions(splitData)
+                    showSplitSheet = false
+                },
+                onCreateTag = onCreateTag
         )
     }
 }
@@ -536,18 +801,18 @@ fun DashboardScreen(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun SwipeablePersonCard(
-    item: PersonWithBalance,
-    index: Int,
-    shape: Shape,
-    springOffsetX: Float,
-    showLastActivity: Boolean,
-    onSwipeStart: (Int) -> Unit,
-    onSwipeProgress: (Float) -> Unit,
-    onSwipeEnd: () -> Unit,
-    onRename: () -> Unit,
-    onDelete: () -> Unit,
-    onClick: () -> Unit,
-    onLongPress: () -> Unit
+        item: PersonWithBalance,
+        index: Int,
+        shape: Shape,
+        springOffsetX: Float,
+        showLastActivity: Boolean,
+        onSwipeStart: (Int) -> Unit,
+        onSwipeProgress: (Float) -> Unit,
+        onSwipeEnd: () -> Unit,
+        onRename: () -> Unit,
+        onDelete: () -> Unit,
+        onClick: () -> Unit,
+        onLongPress: () -> Unit
 ) {
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
@@ -555,7 +820,8 @@ fun SwipeablePersonCard(
     // Threshold for triggering action (in pixels)
     val actionThresholdPx = with(density) { 120.dp.toPx() }
 
-    // Resistance factor - creates spring-like pull back effect (0 = no resistance, 1 = full resistance)
+    // Resistance factor - creates spring-like pull back effect (0 = no resistance, 1 = full
+    // resistance)
     val resistanceFactor = 0.55f
 
     // Animatable for smooth swipe and snap-back
@@ -563,11 +829,12 @@ fun SwipeablePersonCard(
 
     // Derived swipe direction and progress
     val currentOffset = offsetX.value
-    val swipeDirection = when {
-        currentOffset > 0 -> SwipeDirection.StartToEnd // Rename
-        currentOffset < 0 -> SwipeDirection.EndToStart // Delete
-        else -> SwipeDirection.None
-    }
+    val swipeDirection =
+            when {
+                currentOffset > 0 -> SwipeDirection.StartToEnd // Rename
+                currentOffset < 0 -> SwipeDirection.EndToStart // Delete
+                else -> SwipeDirection.None
+            }
     val progress = (abs(currentOffset) / actionThresholdPx).coerceIn(0f, 1f)
 
     // Shape morphing - transitions to SingleItemShape when swiping
@@ -576,170 +843,207 @@ fun SwipeablePersonCard(
     // Background colors
     val renameColor = MaterialTheme.colorScheme.secondaryContainer
     val deleteColor = MaterialTheme.colorScheme.errorContainer
-    val backgroundColor by animateColorAsState(
-        targetValue = when {
-            currentOffset > 0 -> renameColor
-            currentOffset < 0 -> deleteColor
-            else -> Color.Transparent
-        },
-        animationSpec = spring(stiffness = Spring.StiffnessMedium),
-        label = "SwipeBgColor"
-    )
+    val backgroundColor by
+            animateColorAsState(
+                    targetValue =
+                            when {
+                                currentOffset > 0 -> renameColor
+                                currentOffset < 0 -> deleteColor
+                                else -> Color.Transparent
+                            },
+                    animationSpec = spring(stiffness = Spring.StiffnessMedium),
+                    label = "SwipeBgColor"
+            )
 
     // Icon properties - using outlined icons
-    val icon = when (swipeDirection) {
-        SwipeDirection.StartToEnd -> Icons.Outlined.Edit
-        SwipeDirection.EndToStart -> Icons.Outlined.Delete
-        SwipeDirection.None -> Icons.Outlined.Edit
-    }
-    val iconTint = when (swipeDirection) {
-        SwipeDirection.StartToEnd -> MaterialTheme.colorScheme.onSecondaryContainer
-        SwipeDirection.EndToStart -> MaterialTheme.colorScheme.onErrorContainer
-        SwipeDirection.None -> Color.Transparent
-    }
-    val iconAlignment = when (swipeDirection) {
-        SwipeDirection.StartToEnd -> Alignment.CenterStart
-        SwipeDirection.EndToStart -> Alignment.CenterEnd
-        SwipeDirection.None -> Alignment.Center
-    }
+    val icon =
+            when (swipeDirection) {
+                SwipeDirection.StartToEnd -> Icons.Outlined.Edit
+                SwipeDirection.EndToStart -> Icons.Outlined.Delete
+                SwipeDirection.None -> Icons.Outlined.Edit
+            }
+    val iconTint =
+            when (swipeDirection) {
+                SwipeDirection.StartToEnd -> MaterialTheme.colorScheme.onSecondaryContainer
+                SwipeDirection.EndToStart -> MaterialTheme.colorScheme.onErrorContainer
+                SwipeDirection.None -> Color.Transparent
+            }
+    val iconAlignment =
+            when (swipeDirection) {
+                SwipeDirection.StartToEnd -> Alignment.CenterStart
+                SwipeDirection.EndToStart -> Alignment.CenterEnd
+                SwipeDirection.None -> Alignment.Center
+            }
 
     // Icon scale based on progress (grows as user swipes further)
-    val iconScale by animateFloatAsState(
-        targetValue = if (progress > 0f) 0.9f + (0.3f * progress) else 0.9f,
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessMedium
-        ),
-        label = "IconScale"
-    )
+    val iconScale by
+            animateFloatAsState(
+                    targetValue = if (progress > 0f) 0.9f + (0.3f * progress) else 0.9f,
+                    animationSpec =
+                            spring(
+                                    dampingRatio = Spring.DampingRatioMediumBouncy,
+                                    stiffness = Spring.StiffnessMedium
+                            ),
+                    label = "IconScale"
+            )
 
     Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .graphicsLayer {
-                // Horizontal spring offset for neighbor cards
-                translationX = springOffsetX
-            }
+            modifier =
+                    Modifier.fillMaxWidth().graphicsLayer {
+                        // Horizontal spring offset for neighbor cards
+                        translationX = springOffsetX
+                    }
     ) {
         // Background layer (shows immediately on swipe)
-        // Always use SingleItemShape to match the morphed foreground and prevent corner glitches
+        // Always use SingleItemShape to match the morphed foreground and prevent corner
+        // glitches
         if (currentOffset != 0f) {
             Box(
-                modifier = Modifier
-                    .matchParentSize()
-                    .clip(SingleItemShape)
-                    .background(backgroundColor)
-                    .padding(horizontal = 24.dp),
-                contentAlignment = iconAlignment
+                    modifier =
+                            Modifier.matchParentSize()
+                                    .clip(SingleItemShape)
+                                    .background(backgroundColor)
+                                    .padding(horizontal = 24.dp),
+                    contentAlignment = iconAlignment
             ) {
                 Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = iconTint.copy(alpha = progress.coerceIn(0.4f, 1f)),
-                    modifier = Modifier.size(24.dp * iconScale)
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = iconTint.copy(alpha = progress.coerceIn(0.4f, 1f)),
+                        modifier = Modifier.size(24.dp * iconScale)
                 )
             }
         }
 
         // Foreground card layer
         Box(
-            modifier = Modifier
-                .offset { IntOffset(currentOffset.roundToInt(), 0) }
-                .pointerInput(Unit) {
-                    detectHorizontalDragGestures(
-                        onDragStart = {
-                            onSwipeStart(index)
-                        },
-                        onDragEnd = {
-                            val finalOffset = offsetX.value
-                            val triggered = abs(finalOffset) >= actionThresholdPx
+                modifier =
+                        Modifier.offset { IntOffset(currentOffset.roundToInt(), 0) }.pointerInput(
+                                        Unit
+                                ) {
+                            detectHorizontalDragGestures(
+                                    onDragStart = { onSwipeStart(index) },
+                                    onDragEnd = {
+                                        val finalOffset = offsetX.value
+                                        val triggered = abs(finalOffset) >= actionThresholdPx
 
-                            scope.launch {
-                                // Snap back with tight spring animation
-                                offsetX.animateTo(
-                                    targetValue = 0f,
-                                    animationSpec = spring(
-                                        dampingRatio = Spring.DampingRatioLowBouncy,
-                                        stiffness = Spring.StiffnessMediumLow
-                                    )
-                                )
-                            }
+                                        scope.launch {
+                                            // Snap back with tight
+                                            // spring animation
+                                            offsetX.animateTo(
+                                                    targetValue = 0f,
+                                                    animationSpec =
+                                                            spring(
+                                                                    dampingRatio =
+                                                                            Spring.DampingRatioLowBouncy,
+                                                                    stiffness =
+                                                                            Spring.StiffnessMediumLow
+                                                            )
+                                            )
+                                        }
 
-                            // Trigger action ONLY on release if threshold was met
-                            if (triggered) {
-                                if (finalOffset > 0) {
-                                    onRename()
-                                } else {
-                                    onDelete()
-                                }
-                            }
+                                        // Trigger action ONLY on release if
+                                        // threshold was met
+                                        if (triggered) {
+                                            if (finalOffset > 0) {
+                                                onRename()
+                                            } else {
+                                                onDelete()
+                                            }
+                                        }
 
-                            onSwipeEnd()
-                        },
-                        onDragCancel = {
-                            scope.launch {
-                                offsetX.animateTo(
-                                    targetValue = 0f,
-                                    animationSpec = spring(
-                                        dampingRatio = Spring.DampingRatioLowBouncy,
-                                        stiffness = Spring.StiffnessMediumLow
-                                    )
-                                )
-                            }
-                            onSwipeEnd()
-                        },
-                        onHorizontalDrag = { _, dragAmount ->
-                            scope.launch {
-                                // Apply resistance - the further you drag, the harder it gets
-                                val currentPos = offsetX.value
-                                val resistedDrag = dragAmount * (1f - (abs(currentPos) / (actionThresholdPx * 2f)) * resistanceFactor)
-                                val newValue = currentPos + resistedDrag
-                                offsetX.snapTo(newValue)
-                                onSwipeProgress(newValue / actionThresholdPx)
-                            }
+                                        onSwipeEnd()
+                                    },
+                                    onDragCancel = {
+                                        scope.launch {
+                                            offsetX.animateTo(
+                                                    targetValue = 0f,
+                                                    animationSpec =
+                                                            spring(
+                                                                    dampingRatio =
+                                                                            Spring.DampingRatioLowBouncy,
+                                                                    stiffness =
+                                                                            Spring.StiffnessMediumLow
+                                                            )
+                                            )
+                                        }
+                                        onSwipeEnd()
+                                    },
+                                    onHorizontalDrag = { _, dragAmount ->
+                                        scope.launch {
+                                            // Apply resistance - the
+                                            // further you drag, the
+                                            // harder
+                                            // it gets
+                                            val currentPos = offsetX.value
+                                            val resistedDrag =
+                                                    dragAmount *
+                                                            (1f -
+                                                                    (abs(currentPos) /
+                                                                            (actionThresholdPx *
+                                                                                    2f)) *
+                                                                            resistanceFactor)
+                                            val newValue = currentPos + resistedDrag
+                                            offsetX.snapTo(newValue)
+                                            onSwipeProgress(newValue / actionThresholdPx)
+                                        }
+                                    }
+                            )
                         }
-                    )
-                }
         ) {
             PersonRow(
-                item = item,
-                onClick = { onClick() },
-                onLongPress = { onLongPress() },
-                shape = morphedShape,
-                showLastActivity = showLastActivity
+                    item = item,
+                    onClick = { onClick() },
+                    onLongPress = { onLongPress() },
+                    shape = morphedShape,
+                    showLastActivity = showLastActivity
             )
         }
     }
 }
 
 enum class SwipeDirection {
-    None, StartToEnd, EndToStart
+    None,
+    StartToEnd,
+    EndToStart
 }
 
 // ... (Keep existing helpers: CustomDashboardTopBar, ReportCard, etc.) ...
 @Composable
-fun CustomDashboardTopBar(height: Dp, fraction: Float, statusBarHeight: Dp, onSettingsClick: () -> Unit) {
+fun CustomDashboardTopBar(
+        height: Dp,
+        fraction: Float,
+        statusBarHeight: Dp,
+        onSettingsClick: () -> Unit
+) {
     val titleSize = lerpTextUnit(32.sp, 22.sp, fraction)
     val titleStartPadding = androidx.compose.ui.unit.lerp(16.dp, 16.dp, fraction)
     val titleBottomPadding = androidx.compose.ui.unit.lerp(24.dp, 16.dp, fraction)
 
     Surface(
-        modifier = Modifier.height(height).fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surfaceContainerLowest,
-        shadowElevation = if (fraction > 0.9f) 3.dp else 0.dp
+            modifier = Modifier.height(height).fillMaxWidth(),
+            color = MaterialTheme.colorScheme.surfaceContainerLowest,
+            shadowElevation = if (fraction > 0.9f) 3.dp else 0.dp
     ) {
         Box(Modifier.fillMaxSize()) {
             FilledIconButton(
-                onClick = onSettingsClick,
-                modifier = Modifier.align(Alignment.TopEnd).padding(top = statusBarHeight + 8.dp, end = 8.dp),
-                colors = IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)
+                    onClick = onSettingsClick,
+                    modifier =
+                            Modifier.align(Alignment.TopEnd)
+                                    .padding(top = statusBarHeight + 8.dp, end = 8.dp),
+                    colors =
+                            IconButtonDefaults.filledIconButtonColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                            )
             ) { Icon(Icons.Outlined.Settings, contentDescription = "Settings") }
 
             Text(
-                text = "LiteLedger",
-                style = MaterialTheme.typography.headlineMedium,
-                fontSize = titleSize,
-                modifier = Modifier.align(Alignment.BottomStart).padding(start = titleStartPadding, bottom = titleBottomPadding)
+                    text = "LiteLedger",
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontSize = titleSize,
+                    modifier =
+                            Modifier.align(Alignment.BottomStart)
+                                    .padding(start = titleStartPadding, bottom = titleBottomPadding)
             )
         }
     }
@@ -751,112 +1055,178 @@ fun ReportCard(totalReceive: Long, totalPay: Long, isPrivacyMode: Boolean) {
     val activeGreen = if (isDark) Color(0xFF81C784) else MoneyGreen
     val activeRed = if (isDark) Color(0xFFE57373) else MoneyRed
 
-    Card(modifier = Modifier.fillMaxWidth(), shape = SingleItemShape, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)) {
-        Row(modifier = Modifier.padding(32.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+    Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = SingleItemShape,
+            colors =
+                    CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                    )
+    ) {
+        Row(
+                modifier = Modifier.padding(32.dp).fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+        ) {
             Column {
                 Text("RECEIVE", color = activeGreen, style = MaterialTheme.typography.labelMedium)
                 PrivacyText(
-                    text = Formatters.formatCurrency(totalReceive),
-                    isPrivacyMode = isPrivacyMode,
-                    color = activeGreen,
-                    style = MaterialTheme.typography.headlineMedium
+                        text = Formatters.formatCurrency(totalReceive),
+                        isPrivacyMode = isPrivacyMode,
+                        color = activeGreen,
+                        style = MaterialTheme.typography.headlineMedium
                 )
             }
             Column(horizontalAlignment = Alignment.End) {
                 Text("PAY", color = activeRed, style = MaterialTheme.typography.labelMedium)
                 PrivacyText(
-                    text = Formatters.formatCurrency(totalPay),
-                    isPrivacyMode = isPrivacyMode,
-                    color = activeRed,
-                    style = MaterialTheme.typography.headlineMedium
+                        text = Formatters.formatCurrency(totalPay),
+                        isPrivacyMode = isPrivacyMode,
+                        color = activeRed,
+                        style = MaterialTheme.typography.headlineMedium
                 )
             }
         }
     }
 }
 
-fun lerpTextUnit(start: TextUnit, stop: TextUnit, fraction: Float): TextUnit = (start.value + (stop.value - start.value) * fraction).sp
+fun lerpTextUnit(start: TextUnit, stop: TextUnit, fraction: Float): TextUnit =
+        (start.value + (stop.value - start.value) * fraction).sp
 
-// ... (Rest of existing composables: PersonInputSheet, DeleteConfirmationSheet, PersonRow, EmptyState...) ...
+// ... (Rest of existing composables: PersonInputSheet, DeleteConfirmationSheet, PersonRow,
+// EmptyState...) ...
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PersonInputSheet(
-    initialName: String, 
-    isRename: Boolean, 
-    onDismiss: () -> Unit, 
-    onValidate: suspend (String) -> Boolean, 
-    onConfirm: (String, Boolean) -> Unit
+        initialName: String,
+        isRename: Boolean,
+        onDismiss: () -> Unit,
+        onValidate: suspend (String) -> Boolean,
+        onConfirm: (String, Boolean) -> Unit
 ) {
     var name by remember { mutableStateOf(initialName) }
     var isTemporary by remember { mutableStateOf(false) }
     var errorText by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
-    fun updateName(newName: String) { name = newName; if (errorText != null) errorText = null }
+    fun updateName(newName: String) {
+        name = newName
+        if (errorText != null) errorText = null
+    }
 
     ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+            onDismissRequest = onDismiss,
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ) {
         Column(modifier = Modifier.padding(24.dp).navigationBarsPadding()) {
-            Text(if (isRename) "Rename Person" else "New Person", style = MaterialTheme.typography.headlineSmall)
+            Text(
+                    if (isRename) "Rename Person" else "New Person",
+                    style = MaterialTheme.typography.headlineSmall
+            )
             Spacer(modifier = Modifier.height(24.dp))
             OutlinedTextField(
-                value = name, onValueChange = { updateName(it) }, label = { Text("Name") }, isError = errorText != null,
-                supportingText = { if (errorText != null) Text(errorText!!, color = MaterialTheme.colorScheme.error) },
-                modifier = Modifier.fillMaxWidth(), shape = SingleItemShape, singleLine = true,
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words, imeAction = ImeAction.Done),
-                colors = OutlinedTextFieldDefaults.colors(unfocusedBorderColor = Color.Transparent, focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh, unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh)
+                    value = name,
+                    onValueChange = { updateName(it) },
+                    label = { Text("Name") },
+                    isError = errorText != null,
+                    supportingText = {
+                        if (errorText != null)
+                                Text(errorText!!, color = MaterialTheme.colorScheme.error)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = SingleItemShape,
+                    singleLine = true,
+                    keyboardOptions =
+                            KeyboardOptions(
+                                    capitalization = KeyboardCapitalization.Words,
+                                    imeAction = ImeAction.Done
+                            ),
+                    colors =
+                            OutlinedTextFieldDefaults.colors(
+                                    unfocusedBorderColor = Color.Transparent,
+                                    focusedContainerColor =
+                                            MaterialTheme.colorScheme.surfaceContainerHigh,
+                                    unfocusedContainerColor =
+                                            MaterialTheme.colorScheme.surfaceContainerHigh
+                            )
             )
-            
+
             // One-time toggle (only for new person, not rename)
             if (!isRename) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column {
                         Text("One-time", style = MaterialTheme.typography.bodyLarge)
                         Text(
-                            "Auto-hide when settled", 
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                "Auto-hide when settled",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     Switch(
-                        checked = isTemporary,
-                        onCheckedChange = { isTemporary = it },
-                        thumbContent = {
-                            Icon(
-                                imageVector = if (isTemporary) Icons.Outlined.Check else Icons.Outlined.Close,
-                                contentDescription = null,
-                                modifier = Modifier.size(SwitchDefaults.IconSize)
-                            )
-                        },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedIconColor = MaterialTheme.colorScheme.primary,
-                            uncheckedThumbColor = MaterialTheme.colorScheme.outline,
-                            uncheckedTrackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-                            uncheckedIconColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-                            uncheckedBorderColor = MaterialTheme.colorScheme.outline
-                        )
+                            checked = isTemporary,
+                            onCheckedChange = { isTemporary = it },
+                            thumbContent = {
+                                Icon(
+                                        imageVector =
+                                                if (isTemporary) Icons.Outlined.Check
+                                                else Icons.Outlined.Close,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(SwitchDefaults.IconSize)
+                                )
+                            },
+                            colors =
+                                    SwitchDefaults.colors(
+                                            checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                                            checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                            checkedIconColor = MaterialTheme.colorScheme.primary,
+                                            uncheckedThumbColor = MaterialTheme.colorScheme.outline,
+                                            uncheckedTrackColor =
+                                                    MaterialTheme.colorScheme
+                                                            .surfaceContainerHighest,
+                                            uncheckedIconColor =
+                                                    MaterialTheme.colorScheme
+                                                            .surfaceContainerHighest,
+                                            uncheckedBorderColor = MaterialTheme.colorScheme.outline
+                                    )
                     )
                 }
             }
-            
+
             Spacer(modifier = Modifier.height(16.dp))
             Row(modifier = Modifier.fillMaxWidth()) {
-                Button(onClick = onDismiss, modifier = Modifier.weight(1f).height(56.dp), shape = SplitLeftShape, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh, contentColor = MaterialTheme.colorScheme.onSurface)) { Text("Cancel") }
+                Button(
+                        onClick = onDismiss,
+                        modifier = Modifier.weight(1f).height(56.dp),
+                        shape = SplitLeftShape,
+                        colors =
+                                ButtonDefaults.buttonColors(
+                                        containerColor =
+                                                MaterialTheme.colorScheme.surfaceContainerHigh,
+                                        contentColor = MaterialTheme.colorScheme.onSurface
+                                )
+                ) { Text("Cancel") }
                 Spacer(modifier = Modifier.width(6.dp))
-                Button(onClick = {
-                    val trimmed = name.trim()
-                    if (trimmed.isBlank()) { errorText = "Name cannot be empty" }
-                    else if (trimmed.equals(initialName, ignoreCase = true)) { onConfirm(trimmed, isTemporary) }
-                    else { scope.launch { if (onValidate(trimmed)) errorText = "Person already exists" else onConfirm(trimmed, isTemporary) } }
-                }, modifier = Modifier.weight(1f).height(56.dp), shape = SplitRightShape) { Text("Save") }
+                Button(
+                        onClick = {
+                            val trimmed = name.trim()
+                            if (trimmed.isBlank()) {
+                                errorText = "Name cannot be empty"
+                            } else if (trimmed.equals(initialName, ignoreCase = true)) {
+                                onConfirm(trimmed, isTemporary)
+                            } else {
+                                scope.launch {
+                                    if (onValidate(trimmed)) errorText = "Person already exists"
+                                    else onConfirm(trimmed, isTemporary)
+                                }
+                            }
+                        },
+                        modifier = Modifier.weight(1f).height(56.dp),
+                        shape = SplitRightShape
+                ) { Text("Save") }
             }
         }
     }
@@ -866,18 +1236,44 @@ fun PersonInputSheet(
 @Composable
 fun DeleteConfirmationSheet(onDismiss: () -> Unit, onConfirm: () -> Unit) {
     ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+            onDismissRequest = onDismiss,
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ) {
-        Column(modifier = Modifier.padding(24.dp).navigationBarsPadding(), horizontalAlignment = Alignment.CenterHorizontally) {
+        Column(
+                modifier = Modifier.padding(24.dp).navigationBarsPadding(),
+                horizontalAlignment = Alignment.CenterHorizontally
+        ) {
             Text("Delete Person?", style = MaterialTheme.typography.headlineSmall)
             Spacer(modifier = Modifier.height(8.dp))
-            Text("This will delete all history permanently.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                    "This will delete all history permanently.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             Spacer(modifier = Modifier.height(24.dp))
             Row(modifier = Modifier.fillMaxWidth()) {
-                Button(onClick = onDismiss, modifier = Modifier.weight(1f).height(56.dp), shape = SplitLeftShape, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh, contentColor = MaterialTheme.colorScheme.onSurface)) { Text("Cancel") }
+                Button(
+                        onClick = onDismiss,
+                        modifier = Modifier.weight(1f).height(56.dp),
+                        shape = SplitLeftShape,
+                        colors =
+                                ButtonDefaults.buttonColors(
+                                        containerColor =
+                                                MaterialTheme.colorScheme.surfaceContainerHigh,
+                                        contentColor = MaterialTheme.colorScheme.onSurface
+                                )
+                ) { Text("Cancel") }
                 Spacer(modifier = Modifier.width(4.dp))
-                Button(onClick = onConfirm, modifier = Modifier.weight(1f).height(56.dp), shape = SplitRightShape, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text("Delete") }
+                Button(
+                        onClick = onConfirm,
+                        modifier = Modifier.weight(1f).height(56.dp),
+                        shape = SplitRightShape,
+                        colors =
+                                ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.error
+                                )
+                ) { Text("Delete") }
             }
         }
     }
@@ -886,21 +1282,41 @@ fun DeleteConfirmationSheet(onDismiss: () -> Unit, onConfirm: () -> Unit) {
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun PersonRow(
-    item: PersonWithBalance,
-    onClick: (Long) -> Unit,
-    onLongPress: (Long) -> Unit,
-    shape: Shape,
-    showLastActivity: Boolean = true
+        item: PersonWithBalance,
+        onClick: (Long) -> Unit,
+        onLongPress: (Long) -> Unit,
+        shape: Shape,
+        showLastActivity: Boolean = true
 ) {
     val isDark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
     val activeGreen = if (isDark) Color(0xFF81C784) else MoneyGreen
     val activeRed = if (isDark) Color(0xFFE57373) else MoneyRed
     val balanceColor = if (item.balance >= 0) activeGreen else activeRed
 
-    Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, modifier = Modifier.fillMaxWidth().clip(shape).combinedClickable(onClick = { onClick(item.person.id) }, onLongClick = { onLongPress(item.person.id) })) {
+    Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            modifier =
+                    Modifier.fillMaxWidth()
+                            .clip(shape)
+                            .combinedClickable(
+                                    onClick = { onClick(item.person.id) },
+                                    onLongClick = { onLongPress(item.person.id) }
+                            )
+    ) {
         Row(modifier = Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(modifier = Modifier.size(48.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary), contentAlignment = Alignment.Center) {
-                Text(item.person.name.take(1).uppercase(), color = MaterialTheme.colorScheme.onPrimary, style = MaterialTheme.typography.titleMedium)
+            Box(
+                    modifier =
+                            Modifier.size(48.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.primary),
+                    contentAlignment = Alignment.Center
+            ) {
+                Text(
+                        item.person.name.take(1).uppercase(),
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        style = MaterialTheme.typography.titleMedium
+                )
             }
             Spacer(Modifier.width(16.dp))
             Column(modifier = Modifier.weight(1f)) {
@@ -908,13 +1324,17 @@ fun PersonRow(
                 // Show last activity if enabled and has transactions
                 if (showLastActivity && item.lastActivityAt != null) {
                     Text(
-                        text = Formatters.formatRelativeTime(item.lastActivityAt),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                            text = Formatters.formatRelativeTime(item.lastActivityAt),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                     )
                 }
             }
-            Text(Formatters.formatCurrency(item.balance), color = balanceColor, style = MaterialTheme.typography.titleMedium)
+            Text(
+                    Formatters.formatCurrency(item.balance),
+                    color = balanceColor,
+                    style = MaterialTheme.typography.titleMedium
+            )
         }
     }
 }
@@ -922,10 +1342,22 @@ fun PersonRow(
 @Composable
 fun EmptyState() {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(bottom = 120.dp)) {
-            Icon(Icons.Outlined.Person, null, modifier = Modifier.size(72.dp), tint = MaterialTheme.colorScheme.outlineVariant)
+        Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.padding(bottom = 120.dp)
+        ) {
+            Icon(
+                    Icons.Outlined.Person,
+                    null,
+                    modifier = Modifier.size(72.dp),
+                    tint = MaterialTheme.colorScheme.outlineVariant
+            )
             Spacer(Modifier.height(16.dp))
-            Text("No debts yet", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                    "No debts yet",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
@@ -933,8 +1365,15 @@ fun EmptyState() {
 @Composable
 fun SearchInitialState() {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(top = 48.dp)) {
-            Text("No recent searches", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.padding(top = 48.dp)
+        ) {
+            Text(
+                    "No recent searches",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
@@ -942,10 +1381,22 @@ fun SearchInitialState() {
 @Composable
 fun SearchNotFoundState() {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(top = 48.dp)) {
-            Icon(Icons.Outlined.SearchOff, null, modifier = Modifier.size(72.dp), tint = MaterialTheme.colorScheme.outlineVariant)
+        Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.padding(top = 48.dp)
+        ) {
+            Icon(
+                    Icons.Outlined.SearchOff,
+                    null,
+                    modifier = Modifier.size(72.dp),
+                    tint = MaterialTheme.colorScheme.outlineVariant
+            )
             Spacer(modifier = Modifier.height(16.dp))
-            Text("Not found", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                    "Not found",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
@@ -953,59 +1404,55 @@ fun SearchNotFoundState() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SortBottomSheet(
-    currentOption: SortOption,
-    onDismiss: () -> Unit,
-    onSelect: (SortOption) -> Unit
+        currentOption: SortOption,
+        onDismiss: () -> Unit,
+        onSelect: (SortOption) -> Unit
 ) {
     ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+            onDismissRequest = onDismiss,
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ) {
         Column(
-            modifier = Modifier
-                .padding(horizontal = 24.dp)
-                .padding(bottom = 24.dp)
-                .navigationBarsPadding()
+                modifier =
+                        Modifier.padding(horizontal = 24.dp)
+                                .padding(bottom = 24.dp)
+                                .navigationBarsPadding()
         ) {
             Text(
-                "Sort by",
-                style = MaterialTheme.typography.headlineSmall,
-                modifier = Modifier.padding(bottom = 16.dp)
+                    "Sort by",
+                    style = MaterialTheme.typography.headlineSmall,
+                    modifier = Modifier.padding(bottom = 16.dp)
             )
 
             SortOption.entries.forEachIndexed { index, option ->
-                val shape = when {
-                    SortOption.entries.size == 1 -> SingleItemShape
-                    index == 0 -> TopItemShape
-                    index == SortOption.entries.lastIndex -> BottomItemShape
-                    else -> MiddleItemShape
-                }
+                val shape =
+                        when {
+                            SortOption.entries.size == 1 -> SingleItemShape
+                            index == 0 -> TopItemShape
+                            index == SortOption.entries.lastIndex -> BottomItemShape
+                            else -> MiddleItemShape
+                        }
                 val isSelected = option == currentOption
 
                 Surface(
-                    onClick = { onSelect(option) },
-                    shape = shape,
-                    color = if (isSelected)
-                        MaterialTheme.colorScheme.secondaryContainer
-                    else
-                        MaterialTheme.colorScheme.surfaceContainerHigh,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 1.dp)
+                        onClick = { onSelect(option) },
+                        shape = shape,
+                        color =
+                                if (isSelected) MaterialTheme.colorScheme.secondaryContainer
+                                else MaterialTheme.colorScheme.surfaceContainerHigh,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp)
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
+                            verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = option.displayName,
-                            style = MaterialTheme.typography.bodyLarge,
-                            modifier = Modifier.weight(1f)
+                                text = option.displayName,
+                                style = MaterialTheme.typography.bodyLarge,
+                                modifier = Modifier.weight(1f)
                         )
-                        RadioButton(
-                            selected = isSelected,
-                            onClick = null
-                        )
+                        RadioButton(selected = isSelected, onClick = null)
                     }
                 }
             }
